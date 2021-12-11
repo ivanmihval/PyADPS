@@ -4,7 +4,7 @@ from typing import NamedTuple, Optional
 import geopy.distance
 
 
-class Coords(NamedTuple):
+class CoordsTuple(NamedTuple):
     lat: float
     lon: float
 
@@ -14,7 +14,7 @@ class City(NamedTuple):
     name_ascii: str
 
 
-def search_city_coords_by_name(city_name: str, cities_csv_path: str) -> Optional[Coords]:
+def search_city_coords_by_name(city_name: str, cities_csv_path: str) -> Optional[CoordsTuple]:
     with open(cities_csv_path, newline='') as csv_file:
         reader = DictReader(csv_file)
         lower_city_name = city_name.lower()
@@ -23,12 +23,12 @@ def search_city_coords_by_name(city_name: str, cities_csv_path: str) -> Optional
             lower_csv_ascii_city_name: str = row['city_ascii'].lower()
 
             if lower_city_name in lower_csv_city_name or lower_city_name in lower_csv_ascii_city_name:
-                return Coords(float(row['lat']), float(row['lng']))
+                return CoordsTuple(float(row['lat']), float(row['lng']))
 
     return None
 
 
-def search_nearest_city_by_coords(coords: Coords, cities_csv_path: str) -> Optional[City]:
+def search_nearest_city_by_coords(coords: CoordsTuple, cities_csv_path: str) -> Optional[City]:
     min_distance: Optional[float] = None
     min_distance_city: Optional[City] = None
 

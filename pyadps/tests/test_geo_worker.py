@@ -2,7 +2,7 @@ from pathlib import PurePath
 
 import pytest
 
-from pyadps.geo_worker import City, Coords, search_city_coords_by_name, search_nearest_city_by_coords
+from pyadps.geo_worker import City, CoordsTuple, search_city_coords_by_name, search_nearest_city_by_coords
 
 WORLDCITIES_CSV_PATH = str(PurePath(__file__).parents[1] / 'static_files/worldcities.csv')
 
@@ -27,5 +27,5 @@ class TestSearchNearestCityByCoords:
         [-23.5311317, -46.9026668, 'São Paulo', 'Sao Paulo']
     ])
     def test_ok(self, lat: float, lon: float, city_name: str, city_name_ascii: str):
-        city = search_nearest_city_by_coords(Coords(lat, lon), WORLDCITIES_CSV_PATH)
+        city = search_nearest_city_by_coords(CoordsTuple(lat, lon), WORLDCITIES_CSV_PATH)
         assert city == City(city_name, city_name_ascii)
