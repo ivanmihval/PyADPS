@@ -98,7 +98,7 @@ class TestFilterMails:
         storage.save_mail(mail_1, [], str(tmp_path))
         storage.save_mail(mail_2, [], str(tmp_path))
 
-        filtered_mails = list(
+        filtered_mail_results = list(
             storage.filter_mails(
                 MailFilter(
                     datetime_created_range_filter=DatetimeCreatedRangeFilterData(date_from=datetime(2019, 12, 1))
@@ -106,4 +106,5 @@ class TestFilterMails:
             )
         )
 
+        filtered_mails = [filtered_mail_result.mail for filtered_mail_result in filtered_mail_results]
         assert filtered_mails == [mail_1]

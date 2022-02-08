@@ -1,12 +1,12 @@
 import os
 import os.path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
 import click
 
 from pyadps.helpers import calculate_hashsum
-from pyadps.mail import CoordsData, FileAttachment, Mail, MailAttachmentInfo
+from pyadps.mail import CoordsData, FileAttachment, Mail, MailAttachmentInfo, MailFilter, DatetimeCreatedRangeFilterData
 from pyadps.storage import Storage
 
 
@@ -15,9 +15,9 @@ def cli():
     pass
 
 
-@cli.command()
+@cli.command('init', help='Init repository')
 @click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
-def init(repo_folder):
+def init(repo_folder: str):
     os.mkdir(os.path.join(repo_folder, Storage.MESSAGES_FOLDER))
     os.mkdir(os.path.join(repo_folder, Storage.ATTACHMENTS_FOLDERS))
 
@@ -31,9 +31,9 @@ def is_valid_repo_folder(repo_folder: str) -> bool:
     return Storage.MESSAGES_FOLDER in directories and Storage.ATTACHMENTS_FOLDERS in directories
 
 
-@cli.command()
+@cli.command('create', help='Interactive command for creating a message')
 @click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
-def create(repo_folder):
+def create(repo_folder: str):
     click.echo('This is the interactive command for creating mail.')
 
     if not is_valid_repo_folder(repo_folder):
@@ -97,6 +97,43 @@ def create(repo_folder):
 
     storage = Storage(repo_folder)
     storage.save_mail(mail=message, mail_attachment_infos=mail_attachment_infos, target_folder_path=repo_folder)
+
+
+@cli.command('clear', help='Deletes expired messages with attachments linked to them')
+@click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
+@click.option('--days', type=click.INT, default=30)
+@click.option('--confirm/--no-confirm', type=click.BOOL, default=True)
+@click.option('--print-list/--no-print-list', type=click.BOOL, default=True)
+def clear(repo_folder: str, days: int, confirm: bool, print_list: bool):
+    if not is_valid_repo_folder(repo_folder):
+        click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
+        raise click.Abort()
+
+    storage = Storage(repo_folder)
+
+    max_date = datetime.now() - timedelta(days=days)
+    mail_filter_results = list(storage.filter_mails(MailFilter(
+        datetime_created_range_filter=DatetimeCreatedRangeFilterData(date_to=max_date)
+    )))
+    msg_paths = [filter_result.mail_path for filter_result in mail_filter_results]
+    attachment_paths_to_delete = storage.get_attachments_for_delete(msg_paths=msg_paths)
+
+    if print_list:
+        click.echo('Message files to delete:')
+        click.echo('\n'.join(msg_paths))
+
+        click.echo('Attachment files to delete:')
+        click.echo('\n'.join(attachment_paths_to_delete))
+
+    confirm_delete: bool = True
+    if confirm:
+        confirm_delete = click.confirm('Do you want to delete these files?')
+
+    if not confirm_delete:
+        raise click.Abort('Operation is cancelled')
+
+    for file_path in [*msg_paths, *attachment_paths_to_delete]:
+        os.remove(file_path)
 
 
 if __name__ == '__main__':

@@ -1,6 +1,7 @@
 import json
 import os
 import os.path
+from dataclasses import dataclass
 from glob import glob
 from io import BytesIO
 from pathlib import PurePath, Path
@@ -19,6 +20,13 @@ class MessageFileTooBigError(Exception):
 class FileSearchResult(NamedTuple):
     path: str
     is_exist: bool
+
+
+@dataclass
+class FilteredMailResult:
+    mail: Mail
+    mail_path: str
+    mail_hashsum_hex: str
 
             
 class Storage:
@@ -56,7 +64,7 @@ class Storage:
         for attachment_path in glob(f'{attachments_folder_path}/{hashsum_hex[:self.HASHSUM_FILENAME_PART_LEN]}*'):
             calculated_hashsum = calculate_hashsum_hex_from_file(attachment_path)
             if calculated_hashsum == hashsum_hex:
-                return attachment_path
+                return os.path.abspath(attachment_path)
 
         raise FileNotFoundError()
 
@@ -71,13 +79,14 @@ class Storage:
 
         return Mail.Schema().load(msg_json)
 
-    def filter_mails(self, mail_filter: MailFilter) -> Generator[Mail, None, None]:
+    def filter_mails(self, mail_filter: MailFilter) -> Generator[FilteredMailResult, None, None]:
         # todo: add progress updater for click interface
         messages_folder_path = PurePath(self.root_dir_path) / self.MESSAGES_FOLDER
         for msg_path in glob(f'{messages_folder_path}/*.json'):
             mail = self.load_mail(msg_path)
+            hashsum_hex = calculate_hashsum_hex_from_file(msg_path)
             if mail_filter.filter_func(mail):
-                yield mail
+                yield FilteredMailResult(mail, os.path.abspath(msg_path), hashsum_hex)
 
     def save_mail(self, mail: Mail, mail_attachment_infos: List[MailAttachmentInfo], target_folder_path: str):
         messages_folder = PurePath(target_folder_path) / self.MESSAGES_FOLDER
@@ -157,3 +166,35 @@ class Storage:
         for msg_path in msg_paths:
             self.copy_mail(msg_path, target_folder_path)
 
+    def get_attachments_for_delete(self, msg_paths: Iterable[Union[str, Path]]) -> List[str]:
+        """
+        Checks every message file in the repo and returns paths of attachments for delete if they aren't linked
+        to other messages (except messages in msg_paths arg)
+        """
+        messages_folder_path = PurePath(self.root_dir_path) / self.MESSAGES_FOLDER
+
+        attachment_hashsums_to_delete = set()
+        attachment_path_by_hashsum = {}
+        msg_paths_to_delete = set()
+        for msg_path in msg_paths:
+            msg_paths_to_delete.add(os.path.abspath(msg_path))
+
+            mail = self.load_mail(msg_path)
+            for attachment in mail.attachments:
+                try:
+                    attachment_path = self.find_attachment_path(attachment.hashsum_hex)
+                    attachment_hashsums_to_delete.add(attachment.hashsum_hex)
+                    attachment_path_by_hashsum[attachment.hashsum_hex] = attachment_path
+                except FileNotFoundError:
+                    continue
+
+        for msg_path in glob(f'{messages_folder_path}/*.json'):
+            if os.path.abspath(msg_path) in msg_paths_to_delete:
+                continue
+
+            mail = self.load_mail(msg_path)
+            for attachment in mail.attachments:
+                if attachment.hashsum_hex in attachment_hashsums_to_delete:
+                    attachment_hashsums_to_delete.remove(attachment.hashsum_hex)
+
+        return [attachment_path_by_hashsum[hashsum] for hashsum in attachment_hashsums_to_delete]
