@@ -8,6 +8,7 @@ import os.path
 import geopy.distance
 from marshmallow import Schema
 from marshmallow_dataclass import add_schema
+from random import random
 
 from pyadps.helpers import calculate_hashsum
 
@@ -90,6 +91,37 @@ class LocationFilterData:
     location: CoordsData
     radius_meters: float
 
+    def is_inside(self, msg_coords: List[CoordsData]):
+        for coord in msg_coords:
+            distance = geopy.distance.distance(coord.to_tuple(), self.location.to_tuple()).m
+
+            if distance < self.radius_meters:
+                return True
+
+        return False
+
+
+@dataclass
+class DampingDistanceFilterData:
+    location: CoordsData
+    base_distance_meters: float
+    threshold_probability: float = 0.05
+
+    @staticmethod
+    def _is_matched_with_probability(probability: float) -> bool:
+        return random() < probability
+
+    def is_inside(self, msg_coords: List[CoordsData]):
+        for coord in msg_coords:
+            distance = geopy.distance.distance(coord.to_tuple(), self.location.to_tuple()).m
+
+            probability = 2 ** (-distance / self.base_distance_meters)
+
+            if probability > self.threshold_probability and self._is_matched_with_probability(probability):
+                return True
+
+        return False
+
 
 @dataclass
 class NameFilterData:
@@ -119,6 +151,7 @@ class MailFilter:
     additional_notes_filter: Optional[AdditionalNotesFilterData] = None
     inline_message_filter: Optional[InlineMessageFilterData] = None
     attachment_filter: Optional[AttachmentFilterData] = None
+    damping_distance_filter: Optional[DampingDistanceFilterData] = None
 
     def filter_func(self, mail: Mail) -> bool:
         if self.datetime_created_range_filter is not None:
@@ -130,15 +163,14 @@ class MailFilter:
                     and mail.date_created > self.datetime_created_range_filter.date_to):
                 return False
 
+        location_filters = []
         if self.location_filter is not None:
-            is_inside = False
-            for coord in mail.recipient_coords:
-                distance = geopy.distance.distance(coord.to_tuple(),
-                                                   self.location_filter.location.to_tuple()).m
+            location_filters.append(self.location_filter)
+        if self.damping_distance_filter is not None:
+            location_filters.append(self.damping_distance_filter)
 
-                if distance < self.location_filter.radius_meters:
-                    is_inside = True
-
+        if location_filters:
+            is_inside = any(location_filter.is_inside(mail.recipient_coords) for location_filter in location_filters)
             if not is_inside:
                 return False
 

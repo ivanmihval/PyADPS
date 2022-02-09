@@ -1,11 +1,16 @@
 from datetime import datetime
 from typing import Optional
+from unittest.mock import patch
 
 import pytest
 
-from pyadps.mail import CoordsData, FileAttachment, MailFilter, DatetimeCreatedRangeFilterData, \
-    LocationFilterData, NameFilterData, AdditionalNotesFilterData, InlineMessageFilterData, AttachmentFilterData
+from pyadps.mail import (CoordsData, FileAttachment, MailFilter, DatetimeCreatedRangeFilterData,
+                         LocationFilterData, NameFilterData, AdditionalNotesFilterData, InlineMessageFilterData,
+                         AttachmentFilterData, DampingDistanceFilterData)
 from pyadps.tests.helpers import fabricate_mail
+
+MOSCOW_COORDS = CoordsData(55.75222, 37.61556)
+YEKATERINBURG_COORDS = CoordsData(56.8519, 60.6122)
 
 
 class TestMailFilter:
@@ -33,6 +38,18 @@ class TestMailFilter:
         mail = fabricate_mail()
         is_filtered_actual = mail_filter.filter_func(mail)
         assert is_filtered_actual is is_filtered_expected
+
+    def test_damping_distance(self):
+        mail_filter = MailFilter(damping_distance_filter=DampingDistanceFilterData(MOSCOW_COORDS, 2000*1000))
+        mail = fabricate_mail(recipient_coords=[YEKATERINBURG_COORDS])
+        with patch('pyadps.mail.DampingDistanceFilterData._is_matched_with_probability', return_value=True) as rnd_mock:
+            is_filtered_actual = mail_filter.filter_func(mail)
+
+        rnd_mock.assert_called_once()
+        called_probability: float = rnd_mock.call_args_list[0][0][0]
+        assert abs(called_probability - 0.6108781088799166) < 0.00001
+
+        assert is_filtered_actual is True
 
     @pytest.mark.parametrize('name, is_filtered_expected', [
         ['john_smith@mydomain.com', True],
