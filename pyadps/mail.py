@@ -192,7 +192,13 @@ class MailFilter:
                 return False
 
         if self.attachment_filter is not None:
-            if self.attachment_filter.hashsum not in {attachment.hashsum_hex for attachment in mail.attachments}:
+            found_attachment = False
+            for attachment in mail.attachments:
+                if attachment.hashsum_hex.startswith(self.attachment_filter.hashsum):
+                    found_attachment = True
+                    break
+
+            if not found_attachment:
                 return False
 
         return True

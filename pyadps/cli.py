@@ -1,13 +1,25 @@
 import os
 import os.path
 from datetime import datetime, timedelta
-from typing import List
+from pathlib import PurePath
+from typing import List, Optional
 
 import click
 
+from pyadps.geo_worker import search_most_populated_city_by_coords
 from pyadps.helpers import calculate_hashsum
-from pyadps.mail import CoordsData, FileAttachment, Mail, MailAttachmentInfo, MailFilter, DatetimeCreatedRangeFilterData
+from pyadps.mail import CoordsData, FileAttachment, Mail, MailAttachmentInfo, MailFilter, \
+    DatetimeCreatedRangeFilterData, LocationFilterData, NameFilterData, AdditionalNotesFilterData, \
+    InlineMessageFilterData, AttachmentFilterData, DampingDistanceFilterData
 from pyadps.storage import Storage
+
+import json
+
+
+class OutputFormat:
+    HASHSUMS = 'HASHSUMS'
+    PATHS = 'PATHS'
+    JSON = 'JSON'
 
 
 @click.group()
@@ -134,6 +146,196 @@ def clear(repo_folder: str, days: int, confirm: bool, print_list: bool):
 
     for file_path in [*msg_paths, *attachment_paths_to_delete]:
         os.remove(file_path)
+
+
+def get_default_damping_distance_filter(
+    damping_distance_latitude,
+    damping_distance_longitude,
+) -> DampingDistanceFilterData:
+    worldcities_csv_path = str(PurePath(__file__).parents[0] / 'static_files/worldcities/worldcities.csv')
+    try:
+        most_populated_city = search_most_populated_city_by_coords(
+            latitude=damping_distance_latitude,
+            longitude=damping_distance_longitude,
+            cities_csv_path=worldcities_csv_path,
+        )
+        if most_populated_city is None:
+            raise click.Abort('Could not find a city near by presented coordinates')
+    except Exception as e:
+        raise click.Abort(f'Could not process worldcities.csv: {e!r}')
+
+    coefficient: float = 10.0  # unit: people per meter
+    base_distance_meters = most_populated_city.population / coefficient
+
+    return DampingDistanceFilterData(
+        location=CoordsData(most_populated_city.latitude, most_populated_city.longitude),
+        base_distance_meters=base_distance_meters
+    )
+
+
+def build_filter(
+    datetime_from: Optional[datetime],
+    datetime_to: Optional[datetime],
+    latitude: Optional[float],
+    longitude: Optional[float],
+    radius_meters: Optional[float],
+    name: Optional[str],
+    additional_notes: Optional[str],
+    inline_message: Optional[str],
+    attachment_hashsum: Optional[str],
+    damping_distance_latitude: Optional[float],
+    damping_distance_longitude: Optional[float],
+    damping_distance_base_distance_meters: Optional[float],
+) -> MailFilter:
+
+    datetime_created_range_filter_data = None
+    if datetime_from or datetime_to:
+        datetime_created_range_filter_data = DatetimeCreatedRangeFilterData(datetime_from, datetime_to)
+
+    if (latitude is None) is not (longitude is None):
+        raise click.BadOptionUsage('latitude', 'both or none of (latitude, longitude) should be filled')
+
+    if latitude is not None and radius_meters is None:
+        raise click.BadOptionUsage('radius-meters', 'radius-meters should be filled if coordinates are specified')
+
+    location_filter_data = None
+    if latitude is not None:
+        location_filter_data = LocationFilterData(CoordsData(latitude, longitude), radius_meters)
+
+    name_filter_data = None
+    if name is not None:
+        name_filter_data = NameFilterData(name)
+
+    additional_notes_filter_data = None
+    if additional_notes is not None:
+        additional_notes_filter_data = AdditionalNotesFilterData(additional_notes)
+
+    inline_message_filter_data = None
+    if inline_message is not None:
+        inline_message_filter_data = InlineMessageFilterData(inline_message)
+
+    attachment_filter_data = None
+    if attachment_hashsum is not None:
+        attachment_filter_data = AttachmentFilterData(attachment_hashsum)
+
+    if (damping_distance_latitude is None) is not (damping_distance_longitude is None):
+        raise click.BadOptionUsage(
+            'damping-distance-latitude',
+            'both or none of (damping-distance-latitude, damping-distance-longitude) should be filled'
+        )
+
+    if (damping_distance_latitude is None) and (damping_distance_base_distance_meters is not None):
+        raise click.BadOptionUsage(
+            'damping-distance-base-distance-meters',
+            'damping-distance-base-distance-meters should be filled if coordinates are specified'
+        )
+
+    damping_distance_filter_data = None
+    if damping_distance_latitude is not None:
+        if damping_distance_base_distance_meters is None:
+            damping_distance_filter_data = get_default_damping_distance_filter(
+                damping_distance_latitude=damping_distance_latitude,
+                damping_distance_longitude=damping_distance_longitude,
+            )
+        else:
+            damping_distance_filter_data = DampingDistanceFilterData(
+                location=CoordsData(damping_distance_latitude, damping_distance_longitude),
+                base_distance_meters=damping_distance_base_distance_meters,
+            )
+
+    return MailFilter(
+        datetime_created_range_filter=datetime_created_range_filter_data,
+        location_filter=location_filter_data,
+        name_filter=name_filter_data,
+        additional_notes_filter=additional_notes_filter_data,
+        inline_message_filter=inline_message_filter_data,
+        attachment_filter=attachment_filter_data,
+        damping_distance_filter=damping_distance_filter_data,
+    )
+
+
+class OutputPrinter:
+    def __init__(self, output_format: str):
+        self.output_format = output_format
+
+    @staticmethod
+    def _get_output_json(mail: Mail, mail_hashsum_hex: str, mail_path: str):
+        mail_serialized = Mail.Schema().dump(mail)
+        mail_serialized['mail_hashsum_hex'] = mail_hashsum_hex
+        mail_serialized['mail_path'] = mail_path
+        return json.dumps(mail_serialized, indent=None, sort_keys=True)
+
+    @staticmethod
+    def _print_func(s: str):
+        click.echo(s)
+
+    def print(self, mail: Mail, mail_hashsum_hex: str, mail_path: str):
+        if self.output_format == OutputFormat.JSON:
+            self._print_func(self._get_output_json(mail, mail_hashsum_hex, mail_path))
+        elif self.output_format == OutputFormat.HASHSUMS:
+            self._print_func(mail_hashsum_hex)
+        else:
+            self._print_func(mail_path)
+
+
+@cli.command('search', help='Searches messages')
+@click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
+@click.option('--datetime-from', type=click.DateTime(), default=datetime.now() - timedelta(days=30))
+@click.option('--datetime-to', type=click.DateTime(), default=None)
+@click.option('--latitude', type=click.FloatRange(min=-90.0, max=90.0), default=None)
+@click.option('--longitude', type=click.FloatRange(min=-180.0, max=180.0), default=None)
+@click.option('--radius-meters', type=click.FLOAT, default=30 * 1000)
+@click.option('--name', type=click.STRING, default=None)
+@click.option('--additional-notes', type=click.STRING, default=None)
+@click.option('--inline-message', type=click.STRING, default=None)
+@click.option('--attachment-hashsum', type=click.STRING, default=None)
+@click.option('--damping-distance-latitude', type=click.FloatRange(min=-90.0, max=90.0), default=None)
+@click.option('--damping-distance-longitude', type=click.FloatRange(min=-180.0, max=180.0), default=None)
+@click.option('--damping-distance-base-distance-meters', type=click.FLOAT, default=None)
+@click.option('--output-format',
+              type=click.Choice([OutputFormat.HASHSUMS, OutputFormat.JSON, OutputFormat.PATHS], case_sensitive=False),
+              default=OutputFormat.JSON)
+def search(
+    repo_folder: str,
+    datetime_from: Optional[datetime],
+    datetime_to: Optional[datetime],
+    latitude: Optional[float],
+    longitude: Optional[float],
+    radius_meters: Optional[float],
+    name: Optional[str],
+    additional_notes: Optional[str],
+    inline_message: Optional[str],
+    attachment_hashsum: Optional[str],
+    damping_distance_latitude: Optional[float],
+    damping_distance_longitude: Optional[float],
+    damping_distance_base_distance_meters: Optional[float],
+    output_format: str,
+):
+    if not is_valid_repo_folder(repo_folder):
+        click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
+        raise click.Abort()
+
+    storage = Storage(repo_folder)
+
+    mail_filter = build_filter(
+        datetime_from=datetime_from,
+        datetime_to=datetime_to,
+        latitude=latitude,
+        longitude=longitude,
+        radius_meters=radius_meters,
+        name=name,
+        additional_notes=additional_notes,
+        inline_message=inline_message,
+        attachment_hashsum=attachment_hashsum,
+        damping_distance_latitude=damping_distance_latitude,
+        damping_distance_longitude=damping_distance_longitude,
+        damping_distance_base_distance_meters=damping_distance_base_distance_meters,
+    )
+
+    output_printer = OutputPrinter(output_format)
+
+    for search_result in storage.filter_mails(mail_filter):
+        output_printer.print(search_result.mail, search_result.mail_hashsum_hex, search_result.mail_path)
 
 
 if __name__ == '__main__':
