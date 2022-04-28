@@ -160,8 +160,8 @@ class Storage:
         messages_folder = PurePath(target_folder_path) / self.MESSAGES_FOLDER
         attachments_folder = PurePath(target_folder_path) / self.ATTACHMENTS_FOLDERS
 
-        os.makedirs(messages_folder)
-        os.makedirs(attachments_folder)
+        os.makedirs(messages_folder, exist_ok=True)
+        os.makedirs(attachments_folder, exist_ok=True)
 
         for msg_path in msg_paths:
             self.copy_mail(msg_path, target_folder_path)

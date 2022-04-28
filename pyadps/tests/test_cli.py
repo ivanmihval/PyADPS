@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from freezegun import freeze_time
 
 from pyadps.cli import (init, create, clear, search, get_default_damping_distance_filter, build_filter, OutputPrinter,
-                        delete)
+                        delete, copy)
 from pyadps.mail import Mail, CoordsData, MailFilter, DatetimeCreatedRangeFilterData, LocationFilterData, \
     NameFilterData, AdditionalNotesFilterData, InlineMessageFilterData, AttachmentFilterData, DampingDistanceFilterData
 from pyadps.storage import Storage
@@ -404,7 +404,7 @@ class TestSearch:
 
 class TestDelete:
     def test_repo_does_not_exist(self, tmp_path):
-        result = CliRunner().invoke(search, [str(tmp_path)+'not_exists'])  # type: ignore
+        result = CliRunner().invoke(delete, [str(tmp_path)+'not_exists'])  # type: ignore
         assert result.exit_code == 2
 
     @pytest.mark.parametrize('option', ['--hashsums', '--msg-path'])
@@ -471,3 +471,77 @@ class TestDelete:
         assert 'Attachment files to delete' in result.output
         assert 'e711a66e46.bin' in result.output
         assert 'Do you want to delete these files?'
+
+
+class TestCopy:
+    def test_repo_does_not_exist(self, tmp_path):
+        result = CliRunner().invoke(copy, [str(tmp_path)+'not_exists'])  # type: ignore
+        assert result.exit_code == 2
+
+    @pytest.mark.parametrize('option', ['--hashsums', '--msg-path'])
+    def test_ok(self, tmp_path, option):
+        originals_path = tmp_path / 'originals'
+        os.makedirs(originals_path)
+
+        attachment_1_content = b'12345'
+        attachment_2_content = b'12345677899'
+        attachment_3_content = b'123123123123'
+
+        with open(originals_path / 'test.txt', 'wb') as file_:
+            file_.write(attachment_1_content)
+
+        with open(originals_path / 'document', 'wb') as file_:
+            file_.write(attachment_2_content)
+
+        with open(originals_path / 'document.txt', 'wb') as file_:
+            file_.write(attachment_1_content)
+
+        with open(originals_path / 'document.bin', 'wb') as file_:
+            file_.write(attachment_3_content)
+
+        mail_1, attachment_infos_1 = Mail.from_attachment_streams(
+            date_created=datetime(2018, 1, 1),
+            recipient_coords=[CoordsData(55.0, 37.0)],
+            name='Donald Smith',
+            additional_notes=None,
+            inline_message='Please see 2 attachments',
+            files=[
+                open(originals_path / 'test.txt', 'rb'),
+                open(originals_path / 'document', 'rb'),
+                open(originals_path / 'document.txt', 'rb')
+            ]
+        )
+
+        mail_2, attachment_infos_2 = Mail.from_attachment_streams(
+            date_created=datetime(2018, 3, 4),
+            recipient_coords=[CoordsData(54.0, 36.0)],
+            name='abcde@abcde.com',
+            additional_notes=None,
+            inline_message='The document is in attachment',
+            files=[open(originals_path / 'document.txt', 'rb'), open(originals_path / 'document.bin', 'rb')]
+        )
+
+        source_dir = tmp_path / 'source'
+        os.makedirs(source_dir)
+        os.makedirs(tmp_path / 'source' / 'adps_messages')
+        os.makedirs(tmp_path / 'source' / 'adps_attachments')
+
+        target_dir = tmp_path / 'target'
+        os.makedirs(target_dir)
+        os.makedirs(tmp_path / 'target' / 'adps_messages')
+        os.makedirs(tmp_path / 'target' / 'adps_attachments')
+
+        storage = Storage(str(source_dir))
+
+        storage.save_mail(mail_1, attachment_infos_1, str(source_dir))
+        storage.save_mail(mail_2, attachment_infos_2, str(source_dir))
+
+        cmd_option = (f'{option}={tmp_path / "source" / "adps_messages" / "647ebe7b8d.json"}'
+                      if option == '--msg-path'
+                      else f'{option}=647ebe7b8d,2492374abcde')
+
+        result = CliRunner().invoke(copy, [str(source_dir), str(target_dir), cmd_option], input='y')  # type: ignore
+        assert result.exit_code == 0
+
+        assert list(os.listdir(target_dir / 'adps_messages')) == ['647ebe7b8d.json']
+        assert list(os.listdir(target_dir / 'adps_attachments')) == ['e711a66e46.bin', '3627909a29.bin']

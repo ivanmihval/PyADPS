@@ -352,6 +352,32 @@ def search(
         output_printer.print(search_result.mail, search_result.mail_hashsum_hex, search_result.mail_path)
 
 
+def get_msg_paths_by_user_input(
+    hashsums: Optional[str],
+    msg_path: Optional[str],
+    storage: Storage
+) -> List[str]:
+    if hashsums is not None and msg_path is not None:
+        raise click.BadOptionUsage('hashsums', 'Cannot specify both --hashsums and --msg-path options')
+
+    if hashsums is None and msg_path is None:
+        raise click.BadOptionUsage('hashsums', 'You should specify one of the following options: '
+                                               '--hashsums, --msg-path')
+
+    msg_paths = []
+    if msg_path is not None:
+        msg_paths.append(msg_path)
+    elif hashsums is not None:
+        hashsums_list = hashsums.split(',')
+        for search_result in storage.filter_mails(mail_filter=None):
+            for hashsum_part in hashsums_list:
+                if search_result.mail_hashsum_hex.startswith(hashsum_part):
+                    msg_paths.append(search_result.mail_path)
+                    break
+
+    return msg_paths
+
+
 @cli.command('delete', help='Deletes messages by their hashsums or by path')
 @click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
 @click.option(
@@ -375,25 +401,12 @@ def delete(
         click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
         raise click.Abort()
 
-    if hashsums is not None and msg_path is not None:
-        raise click.BadOptionUsage('hashsums', 'Cannot specify both --hashsums and --msg-path options')
-
-    if hashsums is None and msg_path is None:
-        raise click.BadOptionUsage('hashsums', 'You should specify one of the following options: '
-                                               '--hashsums, --msg-path')
-
     storage = Storage(repo_folder)
-
-    msg_paths = []
-    if msg_path is not None:
-        msg_paths.append(msg_path)
-    elif hashsums is not None:
-        hashsums_list = hashsums.split(',')
-        for search_result in storage.filter_mails(mail_filter=None):
-            for hashsum_part in hashsums_list:
-                if search_result.mail_hashsum_hex.startswith(hashsum_part):
-                    msg_paths.append(search_result.mail_path)
-                    break
+    msg_paths = get_msg_paths_by_user_input(
+        hashsums=hashsums,
+        msg_path=msg_path,
+        storage=storage
+    )
 
     delete_messages_by_mail_paths(
         msg_paths=msg_paths,
@@ -401,6 +414,39 @@ def delete(
         confirm=confirm,
         print_list=print_list
     )
+
+
+@cli.command('copy', help='Copy messages (with attachments) by their hashsums or by path to another repository')
+@click.argument('source_repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
+@click.argument('target_repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
+@click.option(
+    '--hashsums',
+    type=click.STRING,
+    default=None,
+    help='hashsums of messages divided by comma, for example, "e375f79f4e,1f478f4d9d". '
+         'Warning: this option conflicts with the --path option'
+)
+@click.option('--msg-path', type=click.Path(exists=True, file_okay=True, dir_okay=False), default=None, required=False)
+def copy(
+    source_repo_folder: str,
+    target_repo_folder: str,
+    hashsums: Optional[str],
+    msg_path: Optional[str],
+):
+    for repo_folder in [source_repo_folder, target_repo_folder]:
+        if not is_valid_repo_folder(repo_folder):
+            click.echo(f'The folder {repo_folder!r} is not valid repository. '
+                       f'Use command init for creating the repository')
+            raise click.Abort()
+
+    source_storage = Storage(source_repo_folder)
+    msg_paths = get_msg_paths_by_user_input(
+        hashsums=hashsums,
+        msg_path=msg_path,
+        storage=source_storage
+    )
+
+    source_storage.copy_mails(msg_paths, target_repo_folder)
 
 
 if __name__ == '__main__':
