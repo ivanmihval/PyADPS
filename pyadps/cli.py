@@ -111,23 +111,12 @@ def create(repo_folder: str):
     storage.save_mail(mail=message, mail_attachment_infos=mail_attachment_infos, target_folder_path=repo_folder)
 
 
-@cli.command('clear', help='Deletes expired messages with attachments linked to them')
-@click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
-@click.option('--days', type=click.INT, default=30)
-@click.option('--confirm/--no-confirm', type=click.BOOL, default=True)
-@click.option('--print-list/--no-print-list', type=click.BOOL, default=True)
-def clear(repo_folder: str, days: int, confirm: bool, print_list: bool):
-    if not is_valid_repo_folder(repo_folder):
-        click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
-        raise click.Abort()
-
-    storage = Storage(repo_folder)
-
-    max_date = datetime.now() - timedelta(days=days)
-    mail_filter_results = list(storage.filter_mails(MailFilter(
-        datetime_created_range_filter=DatetimeCreatedRangeFilterData(date_to=max_date)
-    )))
-    msg_paths = [filter_result.mail_path for filter_result in mail_filter_results]
+def delete_messages_by_mail_paths(
+    msg_paths: List[str],
+    storage: Storage,
+    confirm: bool,
+    print_list: bool
+):
     attachment_paths_to_delete = storage.get_attachments_for_delete(msg_paths=msg_paths)
 
     if print_list:
@@ -146,6 +135,31 @@ def clear(repo_folder: str, days: int, confirm: bool, print_list: bool):
 
     for file_path in [*msg_paths, *attachment_paths_to_delete]:
         os.remove(file_path)
+
+
+@cli.command('clear', help='Deletes expired messages with attachments linked to them')
+@click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
+@click.option('--days', type=click.INT, default=30)
+@click.option('--confirm/--no-confirm', type=click.BOOL, default=True)
+@click.option('--print-list/--no-print-list', type=click.BOOL, default=True)
+def clear(repo_folder: str, days: int, confirm: bool, print_list: bool):
+    if not is_valid_repo_folder(repo_folder):
+        click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
+        raise click.Abort()
+
+    storage = Storage(repo_folder)
+
+    max_date = datetime.now() - timedelta(days=days)
+    mail_filter_results = list(storage.filter_mails(MailFilter(
+        datetime_created_range_filter=DatetimeCreatedRangeFilterData(date_to=max_date)
+    )))
+    msg_paths = [filter_result.mail_path for filter_result in mail_filter_results]
+    delete_messages_by_mail_paths(
+        msg_paths=msg_paths,
+        storage=storage,
+        confirm=confirm,
+        print_list=print_list
+    )
 
 
 def get_default_damping_distance_filter(
@@ -336,6 +350,57 @@ def search(
 
     for search_result in storage.filter_mails(mail_filter):
         output_printer.print(search_result.mail, search_result.mail_hashsum_hex, search_result.mail_path)
+
+
+@cli.command('delete', help='Deletes messages by their hashsums or by path')
+@click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
+@click.option(
+    '--hashsums',
+    type=click.STRING,
+    default=None,
+    help='hashsums of messages divided by comma, for example, "e375f79f4e,1f478f4d9d". '
+         'Warning: this option conflicts with the --path option'
+)
+@click.option('--msg-path', type=click.Path(exists=True, file_okay=True, dir_okay=False), default=None, required=False)
+@click.option('--confirm/--no-confirm', type=click.BOOL, default=True, help='ask confirmation before delete')
+@click.option('--print-list/--no-print-list', type=click.BOOL, default=True)
+def delete(
+    repo_folder: str,
+    hashsums: Optional[str],
+    msg_path: Optional[str],
+    confirm: bool,
+    print_list: bool
+):
+    if not is_valid_repo_folder(repo_folder):
+        click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
+        raise click.Abort()
+
+    if hashsums is not None and msg_path is not None:
+        raise click.BadOptionUsage('hashsums', 'Cannot specify both --hashsums and --msg-path options')
+
+    if hashsums is None and msg_path is None:
+        raise click.BadOptionUsage('hashsums', 'You should specify one of the following options: '
+                                               '--hashsums, --msg-path')
+
+    storage = Storage(repo_folder)
+
+    msg_paths = []
+    if msg_path is not None:
+        msg_paths.append(msg_path)
+    elif hashsums is not None:
+        hashsums_list = hashsums.split(',')
+        for search_result in storage.filter_mails(mail_filter=None):
+            for hashsum_part in hashsums_list:
+                if search_result.mail_hashsum_hex.startswith(hashsum_part):
+                    msg_paths.append(search_result.mail_path)
+                    break
+
+    delete_messages_by_mail_paths(
+        msg_paths=msg_paths,
+        storage=storage,
+        confirm=confirm,
+        print_list=print_list
+    )
 
 
 if __name__ == '__main__':

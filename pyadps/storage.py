@@ -6,7 +6,7 @@ from glob import glob
 from io import BytesIO
 from pathlib import PurePath, Path
 from shutil import copyfile
-from typing import Generator, Iterable, Union, NamedTuple, List
+from typing import Generator, Iterable, Union, NamedTuple, List, Optional
 from json import load
 
 from pyadps.helpers import calculate_hashsum_hex_from_file, calculate_hashsum
@@ -79,13 +79,13 @@ class Storage:
 
         return Mail.Schema().load(msg_json)
 
-    def filter_mails(self, mail_filter: MailFilter) -> Generator[FilteredMailResult, None, None]:
+    def filter_mails(self, mail_filter: Optional[MailFilter]) -> Generator[FilteredMailResult, None, None]:
         # todo: add progress updater for click interface
         messages_folder_path = PurePath(self.root_dir_path) / self.MESSAGES_FOLDER
         for msg_path in glob(f'{messages_folder_path}/*.json'):
             mail = self.load_mail(msg_path)
             hashsum_hex = calculate_hashsum_hex_from_file(msg_path)
-            if mail_filter.filter_func(mail):
+            if mail_filter is None or mail_filter.filter_func(mail):
                 yield FilteredMailResult(mail, os.path.abspath(msg_path), hashsum_hex)
 
     def save_mail(self, mail: Mail, mail_attachment_infos: List[MailAttachmentInfo], target_folder_path: str):
