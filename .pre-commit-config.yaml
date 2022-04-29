@@ -1,0 +1,28 @@
+default_stages: [commit, push]
+repos:
+  - repo: https://github.com/asottile/seed-isort-config
+    rev: v2.2.0
+    hooks:
+      - id: seed-isort-config
+  - repo: https://github.com/pre-commit/mirrors-isort
+    rev: v5.8.0
+    hooks:
+      - id: isort
+  - repo: https://github.com/pre-commit/mirrors-autopep8
+    rev: v1.5.7
+    hooks:
+      - id: autopep8
+        entry: autopep8 --max-line-length 120 --experimental
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v3.4.0
+    hooks:
+      - id: fix-encoding-pragma
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: double-quote-string-fixer
+      - id: check-docstring-first
+  - repo: https://gitlab.com/pycqa/flake8
+    rev: '3.9.1'
+    hooks:
+      - id: flake8
+        entry: flake8 --config=setup.cfg

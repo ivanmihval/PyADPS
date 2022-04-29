@@ -1,10 +1,10 @@
+# -*- coding: utf-8 -*-
 import os
-
-from pyadps.mail import Mail, CoordsData, MailFilter, DatetimeCreatedRangeFilterData
 from datetime import datetime
-
 from hashlib import sha512
 
+from pyadps.mail import (CoordsData, DatetimeCreatedRangeFilterData, Mail,
+                         MailFilter)
 from pyadps.storage import Storage
 
 

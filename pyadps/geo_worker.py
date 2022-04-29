@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from csv import DictReader
 from typing import NamedTuple, Optional
 

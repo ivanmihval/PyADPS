@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+import json
 import os
 import os.path
 from datetime import datetime, timedelta
@@ -8,12 +10,12 @@ import click
 
 from pyadps.geo_worker import search_most_populated_city_by_coords
 from pyadps.helpers import calculate_hashsum
-from pyadps.mail import CoordsData, FileAttachment, Mail, MailAttachmentInfo, MailFilter, \
-    DatetimeCreatedRangeFilterData, LocationFilterData, NameFilterData, AdditionalNotesFilterData, \
-    InlineMessageFilterData, AttachmentFilterData, DampingDistanceFilterData
+from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData,
+                         CoordsData, DampingDistanceFilterData,
+                         DatetimeCreatedRangeFilterData, FileAttachment,
+                         InlineMessageFilterData, LocationFilterData, Mail,
+                         MailAttachmentInfo, MailFilter, NameFilterData)
 from pyadps.storage import Storage
-
-import json
 
 
 class OutputFormat:

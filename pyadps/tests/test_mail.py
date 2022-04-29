@@ -1,12 +1,15 @@
+# -*- coding: utf-8 -*-
 from datetime import datetime
 from typing import Optional
 from unittest.mock import patch
 
 import pytest
 
-from pyadps.mail import (CoordsData, FileAttachment, MailFilter, DatetimeCreatedRangeFilterData,
-                         LocationFilterData, NameFilterData, AdditionalNotesFilterData, InlineMessageFilterData,
-                         AttachmentFilterData, DampingDistanceFilterData)
+from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData,
+                         CoordsData, DampingDistanceFilterData,
+                         DatetimeCreatedRangeFilterData, FileAttachment,
+                         InlineMessageFilterData, LocationFilterData,
+                         MailFilter, NameFilterData)
 from pyadps.tests.helpers import fabricate_mail
 
 MOSCOW_COORDS = CoordsData(55.75222, 37.61556)

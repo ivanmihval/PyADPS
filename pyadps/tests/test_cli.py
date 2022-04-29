@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 import os
 from datetime import datetime
@@ -9,10 +10,14 @@ import pytest
 from click.testing import CliRunner
 from freezegun import freeze_time
 
-from pyadps.cli import (init, create, clear, search, get_default_damping_distance_filter, build_filter, OutputPrinter,
-                        delete, copy)
-from pyadps.mail import Mail, CoordsData, MailFilter, DatetimeCreatedRangeFilterData, LocationFilterData, \
-    NameFilterData, AdditionalNotesFilterData, InlineMessageFilterData, AttachmentFilterData, DampingDistanceFilterData
+from pyadps.cli import (OutputPrinter, build_filter, clear, copy, create,
+                        delete, get_default_damping_distance_filter, init,
+                        search)
+from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData,
+                         CoordsData, DampingDistanceFilterData,
+                         DatetimeCreatedRangeFilterData,
+                         InlineMessageFilterData, LocationFilterData, Mail,
+                         MailFilter, NameFilterData)
 from pyadps.storage import Storage
 
 MOSCOW_COORDS = CoordsData(55.75222, 37.61556)
@@ -32,7 +37,7 @@ class TestRepoInit:
 
 
 class TestMailCreate:
-    @freeze_time("2018-03-17T12:06:54")
+    @freeze_time('2018-03-17T12:06:54')
     def test_ok(self, tmp_path):
         os.mkdir(tmp_path / 'adps_messages')
         os.mkdir(tmp_path / 'adps_attachments')
@@ -100,7 +105,7 @@ class TestMailCreate:
 
 
 class TestClearRepository:
-    @freeze_time("2018-03-17T12:06:54")
+    @freeze_time('2018-03-17T12:06:54')
     def test_ok(self, tmp_path):
         originals_path = tmp_path / 'originals'
         os.makedirs(originals_path)
@@ -341,7 +346,7 @@ class TestSearch:
         ['--datetime-from=2010-01-01', '--inline-message=ATTACHMENT'],
         ['--datetime-from=2010-01-01', '--attachment-hashsum=3627909a29c31381a'],
     ])
-    @freeze_time("2018-03-17T12:06:54")
+    @freeze_time('2018-03-17T12:06:54')
     def test_ok(self, tmp_path, filter_args: list):
         originals_path = tmp_path / 'originals'
         os.makedirs(originals_path)

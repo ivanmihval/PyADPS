@@ -1,16 +1,17 @@
+# -*- coding: utf-8 -*-
 import json
 import os
 import os.path
 from dataclasses import dataclass
 from glob import glob
 from io import BytesIO
-from pathlib import PurePath, Path
-from shutil import copyfile
-from typing import Generator, Iterable, Union, NamedTuple, List, Optional
 from json import load
+from pathlib import Path, PurePath
+from shutil import copyfile
+from typing import Generator, Iterable, List, NamedTuple, Optional, Union
 
-from pyadps.helpers import calculate_hashsum_hex_from_file, calculate_hashsum
-from pyadps.mail import Mail, MailFilter, MailAttachmentInfo
+from pyadps.helpers import calculate_hashsum, calculate_hashsum_hex_from_file
+from pyadps.mail import Mail, MailAttachmentInfo, MailFilter
 
 
 class MessageFileTooBigError(Exception):
@@ -28,7 +29,7 @@ class FilteredMailResult:
     mail_path: str
     mail_hashsum_hex: str
 
-            
+
 class Storage:
     MESSAGES_FOLDER = 'adps_messages'
     ATTACHMENTS_FOLDERS = 'adps_attachments'

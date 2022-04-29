@@ -1,14 +1,15 @@
-from dataclasses import dataclass
-from io import FileIO
-from typing import Optional, List, ClassVar, Type, NamedTuple, Tuple, Union, BinaryIO
-from datetime import datetime
-
+# -*- coding: utf-8 -*-
 import os.path
+from dataclasses import dataclass
+from datetime import datetime
+from io import FileIO
+from random import random
+from typing import (BinaryIO, ClassVar, List, NamedTuple, Optional, Tuple,
+                    Type, Union)
 
 import geopy.distance
-from marshmallow import Schema
+from marshmallow import Schema as MarshmallowSchema
 from marshmallow_dataclass import add_schema
-from random import random
 
 from pyadps.helpers import calculate_hashsum
 
@@ -47,7 +48,7 @@ class Mail:
     version: str = '1.0'
     min_version: str = '1.0'
 
-    Schema: ClassVar[Type[Schema]] = None
+    Schema: ClassVar[Type[MarshmallowSchema]] = None
 
     @classmethod
     def from_attachment_streams(

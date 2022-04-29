@@ -1,8 +1,10 @@
+# -*- coding: utf-8 -*-
 from pathlib import PurePath
 
 import pytest
 
-from pyadps.geo_worker import City, CoordsTuple, search_city_coords_by_name, search_nearest_city_by_coords
+from pyadps.geo_worker import (City, CoordsTuple, search_city_coords_by_name,
+                               search_nearest_city_by_coords)
 
 WORLDCITIES_CSV_PATH = str(PurePath(__file__).parents[1] / 'static_files/worldcities/worldcities.csv')
 

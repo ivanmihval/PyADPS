@@ -1,6 +1,7 @@
+# -*- coding: utf-8 -*-
 import hashlib
-from io import RawIOBase, IOBase
 from dataclasses import dataclass
+from io import IOBase
 
 
 @dataclass
