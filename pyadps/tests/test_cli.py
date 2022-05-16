@@ -10,14 +10,11 @@ import pytest
 from click.testing import CliRunner
 from freezegun import freeze_time
 
-from pyadps.cli import (OutputPrinter, build_filter, clear, copy, create,
-                        delete, get_default_damping_distance_filter, init,
-                        search)
-from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData,
-                         CoordsData, DampingDistanceFilterData,
-                         DatetimeCreatedRangeFilterData,
-                         InlineMessageFilterData, LocationFilterData, Mail,
-                         MailFilter, NameFilterData)
+from pyadps.cli import (OutputPrinter, build_filter, clear, copy, create, delete, get_default_damping_distance_filter,
+                        init, search)
+from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData, CoordsData, DampingDistanceFilterData,
+                         DatetimeCreatedRangeFilterData, InlineMessageFilterData, LocationFilterData, Mail, MailFilter,
+                         NameFilterData)
 from pyadps.storage import Storage
 
 MOSCOW_COORDS = CoordsData(55.75222, 37.61556)
@@ -327,7 +324,7 @@ class TestOutputPrinter:
         )
         printer = OutputPrinter(output_format=output_format)
         printer._print_func = Mock()
-        printer.print(mail, '12345', '/1234/5678')
+        printer.print_item(mail, '12345', '/1234/5678')
 
         printer._print_func.assert_called_once()
         assert printer._print_func.call_args.args[0] == expected_output
@@ -399,7 +396,9 @@ class TestSearch:
         storage.save_mail(mail_1, attachment_infos_1, str(source_dir))
         storage.save_mail(mail_2, attachment_infos_2, str(source_dir))
 
-        result = CliRunner().invoke(search, [str(source_dir), *filter_args, '--output-format=paths'])  # type: ignore
+        result = CliRunner().invoke(
+            search,  # type: ignore
+            [str(source_dir), *filter_args, '--output-format=paths', '--no-show-progressbar'])
         assert result.exit_code == 0
         assert result.output == (
             f'{tmp_path}/source/adps_messages/e375f79f4e.json\n'

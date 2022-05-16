@@ -3,12 +3,13 @@ import json
 import os
 import os.path
 from dataclasses import dataclass
+from enum import Enum
 from glob import glob
 from io import BytesIO
 from json import load
 from pathlib import Path, PurePath
 from shutil import copyfile
-from typing import Generator, Iterable, List, NamedTuple, Optional, Union
+from typing import Callable, Collection, Generator, Iterable, List, NamedTuple, Optional, Union
 
 from pyadps.helpers import calculate_hashsum, calculate_hashsum_hex_from_file
 from pyadps.mail import Mail, MailAttachmentInfo, MailFilter
@@ -28,6 +29,63 @@ class FilteredMailResult:
     mail: Mail
     mail_path: str
     mail_hashsum_hex: str
+
+
+class FilterMailCallbackData(NamedTuple):
+    current_mail_idx: int
+    total_mails_number: int
+
+
+class CopyMailCallbackData(NamedTuple):
+    current_file_idx: int
+    current_file_bytes: int
+
+    total_files_number: int
+    total_files_size_bytes: int
+
+    copied_bytes: int
+
+
+class CopyMailsStage(Enum):
+    ESTIMATION = 'ESTIMATION'
+    COPYING = 'COPYING'
+
+
+class CopyMailsCallbackData(NamedTuple):
+    stage: CopyMailsStage
+
+    estimation_progress: Optional[FilterMailCallbackData] = None
+    copying_progress: Optional[CopyMailCallbackData] = None
+
+
+class CopyMailCallback:
+    def __init__(
+        self,
+        total_files_number: int,
+        total_files_size_bytes: int,
+        copy_mails_callback: Optional[Callable[[CopyMailsCallbackData], None]],
+    ):
+        self.total_files_number = total_files_number
+        self.total_files_size_bytes = total_files_size_bytes
+        self.copy_mails_callback = copy_mails_callback
+
+        self.bytes_copied = 0
+        self.files_copied = 0
+
+    def __call__(self, callback_data: CopyMailCallbackData) -> None:
+        self.bytes_copied += callback_data.current_file_bytes
+        self.files_copied += 1
+
+        self.copy_mails_callback(CopyMailsCallbackData(
+            stage=CopyMailsStage.COPYING,
+            copying_progress=CopyMailCallbackData(
+                total_files_number=self.total_files_number,
+                current_file_idx=self.files_copied - 1,
+                current_file_bytes=callback_data.current_file_bytes,
+                total_files_size_bytes=self.total_files_size_bytes,
+                copied_bytes=self.bytes_copied,
+            )
+        ))
 
 
 class Storage:
@@ -80,14 +138,21 @@ class Storage:
 
         return Mail.Schema().load(msg_json)
 
-    def filter_mails(self, mail_filter: Optional[MailFilter]) -> Generator[FilteredMailResult, None, None]:
-        # todo: add progress updater for click interface
+    def filter_mails(
+        self,
+        mail_filter: Optional[MailFilter],
+        callback: Optional[Callable[[FilterMailCallbackData], None]] = None,
+    ) -> Generator[FilteredMailResult, None, None]:
         messages_folder_path = PurePath(self.root_dir_path) / self.MESSAGES_FOLDER
-        for msg_path in glob(f'{messages_folder_path}/*.json'):
+        message_paths = glob(f'{messages_folder_path}/*.json')
+        for idx, msg_path in enumerate(message_paths):
             mail = self.load_mail(msg_path)
             hashsum_hex = calculate_hashsum_hex_from_file(msg_path)
             if mail_filter is None or mail_filter.filter_func(mail):
                 yield FilteredMailResult(mail, os.path.abspath(msg_path), hashsum_hex)
+
+            if callback is not None:
+                callback(FilterMailCallbackData(idx, len(message_paths)))
 
     def save_mail(self, mail: Mail, mail_attachment_infos: List[MailAttachmentInfo], target_folder_path: str):
         messages_folder = PurePath(target_folder_path) / self.MESSAGES_FOLDER
@@ -125,8 +190,12 @@ class Storage:
             if not target_file_search_result.is_exist:
                 copyfile(attachment_path, target_file_search_result.path)
 
-    def copy_mail(self, original_json_path: str, target_folder_path: str):
-        # todo: add progress updater for click interface
+    def copy_mail(
+        self,
+        original_json_path: str,
+        target_folder_path: str,
+        callback: Optional[Callable[[CopyMailCallbackData], None]] = None
+    ):
         messages_folder = PurePath(target_folder_path) / self.MESSAGES_FOLDER
         attachments_folder = PurePath(target_folder_path) / self.ATTACHMENTS_FOLDERS
 
@@ -138,12 +207,25 @@ class Storage:
             hashsum_hex=message_file_hashsum
         )
 
-        if not file_search_result.is_exist:
-            copyfile(original_json_path, file_search_result.path)
-
         mail = self.load_mail(original_json_path)
 
-        for attachment in mail.attachments:
+        mail_file_size_bytes = os.path.getsize(original_json_path)
+        attachments_size_bytes = sum(attachment.size_bytes for attachment in mail.attachments)
+        total_files_size_bytes = mail_file_size_bytes + attachments_size_bytes
+
+        if not file_search_result.is_exist:
+            copyfile(original_json_path, file_search_result.path)
+            if callback is not None:
+                callback(CopyMailCallbackData(
+                    total_files_number=len(mail.attachments) + 1,  # + original json file
+                    current_file_idx=0,
+                    current_file_bytes=mail_file_size_bytes,
+                    total_files_size_bytes=total_files_size_bytes,
+                    copied_bytes=mail_file_size_bytes,
+                ))
+
+        attachments_bytes_copied = 0
+        for idx, attachment in enumerate(mail.attachments, start=1):
             attachment_path = self.find_attachment_path(attachment.hashsum_hex)
             attachment_hashsum = calculate_hashsum_hex_from_file(attachment_path)
             target_file_search_result = self.get_free_file_path(
@@ -155,8 +237,42 @@ class Storage:
             if not target_file_search_result.is_exist:
                 copyfile(attachment_path, target_file_search_result.path)
 
-    def copy_mails(self, msg_paths: Iterable[Union[str, Path]], target_folder_path: Union[str, Path]):
-        # todo: add progress updater for click interface
+            attachments_bytes_copied += attachment.size_bytes
+
+            if callback is not None:
+                callback(CopyMailCallbackData(
+                    total_files_number=len(mail.attachments) + 1,  # + original json file
+                    current_file_idx=idx,
+                    current_file_bytes=attachment.size_bytes,
+                    total_files_size_bytes=total_files_size_bytes,
+                    copied_bytes=mail_file_size_bytes + attachments_bytes_copied,
+                ))
+
+    def copy_mails(
+        self,
+        msg_paths: Collection[Union[str, Path]],
+        target_folder_path: Union[str, Path],
+        callback: Optional[Callable[[CopyMailsCallbackData], None]] = None
+    ):
+        total_files_number = None
+        total_files_size_bytes = None
+        if callback is not None:
+            total_files_number = 0
+            total_files_size_bytes = 0
+
+            for idx, msg_path in enumerate(msg_paths):
+                msg_file_size_bytes = os.path.getsize(msg_path)
+                mail = self.load_mail(msg_path)
+                attachments_size_bytes = sum(attachment.size_bytes for attachment in mail.attachments)
+                mail_files_size_bytes = msg_file_size_bytes + attachments_size_bytes
+
+                total_files_number += len(mail.attachments) + 1
+                total_files_size_bytes += mail_files_size_bytes
+
+                callback(CopyMailsCallbackData(
+                    stage=CopyMailsStage.ESTIMATION,
+                    estimation_progress=FilterMailCallbackData(idx, len(msg_path))
+                ))
 
         messages_folder = PurePath(target_folder_path) / self.MESSAGES_FOLDER
         attachments_folder = PurePath(target_folder_path) / self.ATTACHMENTS_FOLDERS
@@ -164,10 +280,23 @@ class Storage:
         os.makedirs(messages_folder, exist_ok=True)
         os.makedirs(attachments_folder, exist_ok=True)
 
-        for msg_path in msg_paths:
-            self.copy_mail(msg_path, target_folder_path)
+        copy_mail_callback = (
+            None if callback is None
+            else CopyMailCallback(
+                total_files_number=total_files_number,
+                total_files_size_bytes=total_files_size_bytes,
+                copy_mails_callback=callback,
+            )
+        )
 
-    def get_attachments_for_delete(self, msg_paths: Iterable[Union[str, Path]]) -> List[str]:
+        for msg_path in msg_paths:
+            self.copy_mail(msg_path, target_folder_path, copy_mail_callback)
+
+    def get_attachments_for_delete(
+        self,
+        msg_paths: Iterable[Union[str, Path]],
+        callback: Optional[Callable[[FilterMailCallbackData], None]] = None,
+    ) -> List[str]:
         """
         Checks every message file in the repo and returns paths of attachments for delete if they aren't linked
         to other messages (except messages in msg_paths arg)
@@ -189,7 +318,11 @@ class Storage:
                 except FileNotFoundError:
                     continue
 
-        for msg_path in glob(f'{messages_folder_path}/*.json'):
+        message_paths = glob(f'{messages_folder_path}/*.json')
+        for idx, msg_path in enumerate(message_paths):
+            if callback is not None:
+                callback(FilterMailCallbackData(idx, len(message_paths)))
+
             if os.path.abspath(msg_path) in msg_paths_to_delete:
                 continue
 

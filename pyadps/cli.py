@@ -4,24 +4,23 @@ import os
 import os.path
 from datetime import datetime, timedelta
 from pathlib import PurePath
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import click
 
 from pyadps.geo_worker import search_most_populated_city_by_coords
 from pyadps.helpers import calculate_hashsum
-from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData,
-                         CoordsData, DampingDistanceFilterData,
-                         DatetimeCreatedRangeFilterData, FileAttachment,
-                         InlineMessageFilterData, LocationFilterData, Mail,
-                         MailAttachmentInfo, MailFilter, NameFilterData)
-from pyadps.storage import Storage
+from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData, CoordsData, DampingDistanceFilterData,
+                         DatetimeCreatedRangeFilterData, FileAttachment, InlineMessageFilterData, LocationFilterData,
+                         Mail, MailAttachmentInfo, MailFilter, NameFilterData)
+from pyadps.storage import FilterMailCallbackData, Storage
 
 
 class OutputFormat:
     HASHSUMS = 'HASHSUMS'
     PATHS = 'PATHS'
     JSON = 'JSON'
+    COUNT = 'COUNT'
 
 
 @click.group()
@@ -282,16 +281,41 @@ class OutputPrinter:
         return json.dumps(mail_serialized, indent=None, sort_keys=True)
 
     @staticmethod
-    def _print_func(s: str):
+    def _print_func(s: Union[str, int]):
         click.echo(s)
 
-    def print(self, mail: Mail, mail_hashsum_hex: str, mail_path: str):
+    def print_item(self, mail: Mail, mail_hashsum_hex: str, mail_path: str):
         if self.output_format == OutputFormat.JSON:
             self._print_func(self._get_output_json(mail, mail_hashsum_hex, mail_path))
         elif self.output_format == OutputFormat.HASHSUMS:
             self._print_func(mail_hashsum_hex)
+        elif self.output_format == OutputFormat.COUNT:
+            pass
         else:
             self._print_func(mail_path)
+
+    def print_count(self, count: int):
+        if self.output_format == OutputFormat.COUNT:
+            self._print_func(count)
+
+
+class SearchCallback:
+    def __init__(self):
+        self.progressbar = None
+
+    def __call__(self, filter_mail_callback_data: FilterMailCallbackData):
+        if self.progressbar is None:
+            self.progressbar = click.progressbar(
+                length=filter_mail_callback_data.total_mails_number,
+                label='Searching messages...'
+            ).__enter__()
+
+        self.progressbar.update(1)
+
+        is_finished = filter_mail_callback_data.current_mail_idx + 1 == filter_mail_callback_data.total_mails_number
+        if is_finished:
+            self.progressbar.finish()
+            self.progressbar.__exit__(None, None, None)
 
 
 @cli.command('search', help='Searches messages')
@@ -309,8 +333,10 @@ class OutputPrinter:
 @click.option('--damping-distance-longitude', type=click.FloatRange(min=-180.0, max=180.0), default=None)
 @click.option('--damping-distance-base-distance-meters', type=click.FLOAT, default=None)
 @click.option('--output-format',
-              type=click.Choice([OutputFormat.HASHSUMS, OutputFormat.JSON, OutputFormat.PATHS], case_sensitive=False),
+              type=click.Choice([OutputFormat.HASHSUMS, OutputFormat.JSON, OutputFormat.PATHS, OutputFormat.COUNT],
+                                case_sensitive=False),
               default=OutputFormat.JSON)
+@click.option('--show-progressbar/--no-show-progressbar', type=click.BOOL, default=True)
 def search(
     repo_folder: str,
     datetime_from: Optional[datetime],
@@ -326,6 +352,7 @@ def search(
     damping_distance_longitude: Optional[float],
     damping_distance_base_distance_meters: Optional[float],
     output_format: str,
+    show_progressbar: bool,
 ):
     if not is_valid_repo_folder(repo_folder):
         click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
@@ -350,8 +377,13 @@ def search(
 
     output_printer = OutputPrinter(output_format)
 
-    for search_result in storage.filter_mails(mail_filter):
-        output_printer.print(search_result.mail, search_result.mail_hashsum_hex, search_result.mail_path)
+    search_callback = SearchCallback() if show_progressbar else None
+    count = 0
+    for search_result in storage.filter_mails(mail_filter, search_callback):
+        output_printer.print_item(search_result.mail, search_result.mail_hashsum_hex, search_result.mail_path)
+        count += 1
+
+    output_printer.print_count(count)
 
 
 def get_msg_paths_by_user_input(
