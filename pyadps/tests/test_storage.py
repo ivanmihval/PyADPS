@@ -3,8 +3,7 @@ import os
 from datetime import datetime
 from hashlib import sha512
 
-from pyadps.mail import (CoordsData, DatetimeCreatedRangeFilterData, Mail,
-                         MailFilter)
+from pyadps.mail import CoordsData, DatetimeCreatedRangeFilterData, Mail, MailFilter
 from pyadps.storage import Storage
 
 
@@ -67,6 +66,12 @@ class TestCopyMails:
         assert mail_1_sha512.hexdigest().startswith('0d948fdc77')
 
         storage.save_mail(mail_2, attachment_infos_2, str(source_dir))
+
+        # testing iglob
+        os.rename(
+            source_dir / 'adps_attachments' / '158911a346.bin',
+            source_dir / 'adps_attachments' / '158911a346_attachment.bin'
+        )
 
         storage.copy_mails([source_dir / 'adps_messages' / 'bee12b5bd6.json'], target_dir)
 

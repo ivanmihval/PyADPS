@@ -405,6 +405,92 @@ class TestSearch:
             f'{tmp_path}/source/adps_messages/1f478f4d9d.json\n'
         )
 
+    @freeze_time('2018-03-17T12:06:54')
+    def test_copy_and_delete(self, tmp_path):
+        originals_path = tmp_path / 'originals'
+        os.makedirs(originals_path)
+
+        attachment_1_content = b'12345'
+        attachment_2_content = b'12345677899'
+        attachment_3_content = b'123123123123'
+
+        with open(originals_path / 'test.txt', 'wb') as file_:
+            file_.write(attachment_1_content)
+
+        with open(originals_path / 'document', 'wb') as file_:
+            file_.write(attachment_2_content)
+
+        with open(originals_path / 'document.txt', 'wb') as file_:
+            file_.write(attachment_1_content)
+
+        with open(originals_path / 'document.bin', 'wb') as file_:
+            file_.write(attachment_3_content)
+
+        mail_1, attachment_infos_1 = Mail.from_attachment_streams(
+            date_created=datetime(2018, 1, 1),
+            recipient_coords=[CoordsData(55.0, 37.0)],
+            name='donald@smith.com',
+            additional_notes='Moscow City, ul. Vavilova',
+            inline_message='Please see 2 attachments',
+            files=[
+                open(originals_path / 'test.txt', 'rb'),
+                open(originals_path / 'document', 'rb'),
+                open(originals_path / 'document.txt', 'rb')
+            ]
+        )
+
+        mail_2, attachment_infos_2 = Mail.from_attachment_streams(
+            date_created=datetime(2018, 3, 4),
+            recipient_coords=[CoordsData(54.0, 36.0)],
+            name='donald@smith.com',
+            additional_notes='ul. vavilova, 5',
+            inline_message='The document is in attachment',
+            files=[open(originals_path / 'document.txt', 'rb'), open(originals_path / 'document.bin', 'rb')]
+        )
+
+        source_dir = tmp_path / 'source'
+        os.makedirs(source_dir)
+        os.makedirs(source_dir / 'adps_messages')
+        os.makedirs(source_dir / 'adps_attachments')
+
+        target_dir = tmp_path / 'target'
+        os.makedirs(target_dir)
+        os.makedirs(target_dir / 'adps_messages')
+        os.makedirs(target_dir / 'adps_attachments')
+
+        storage = Storage(str(source_dir))
+
+        storage.save_mail(mail_1, attachment_infos_1, str(source_dir))
+        storage.save_mail(mail_2, attachment_infos_2, str(source_dir))
+
+        assert os.path.isfile(source_dir / 'adps_messages' / 'e375f79f4e.json')
+        assert os.path.isfile(source_dir / 'adps_messages' / '1f478f4d9d.json')
+
+        assert os.path.isfile(source_dir / 'adps_attachments' / '3627909a29.bin')
+        assert os.path.isfile(source_dir / 'adps_attachments' / 'e711a66e46.bin')
+        assert os.path.isfile(source_dir / 'adps_attachments' / '158911a346.bin')
+
+        result = CliRunner().invoke(
+            search,  # type: ignore
+            [str(source_dir), '--inline-message=document', '--datetime-from=2010-01-01',
+             '--copy', '--target-repo-folder', target_dir,
+             '--delete']
+        )
+        assert result.exit_code == 0
+
+        assert os.path.isfile(target_dir / 'adps_messages' / 'e375f79f4e.json')
+        assert not os.path.isfile(source_dir / 'adps_messages' / 'e375f79f4e.json')
+
+        assert os.path.isfile(source_dir / 'adps_messages' / '1f478f4d9d.json')
+
+        assert os.path.isfile(source_dir / 'adps_attachments' / '3627909a29.bin')
+        assert os.path.isfile(source_dir / 'adps_attachments' / 'e711a66e46.bin')
+        assert not os.path.isfile(source_dir / 'adps_attachments' / '158911a346.bin')
+
+        assert os.path.isfile(target_dir / 'adps_attachments' / '3627909a29.bin')
+        assert not os.path.isfile(target_dir / 'adps_attachments' / 'e711a66e46.bin')
+        assert os.path.isfile(target_dir / 'adps_attachments' / '158911a346.bin')
+
 
 class TestDelete:
     def test_repo_does_not_exist(self, tmp_path):

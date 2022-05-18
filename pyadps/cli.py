@@ -13,7 +13,8 @@ from pyadps.helpers import calculate_hashsum
 from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData, CoordsData, DampingDistanceFilterData,
                          DatetimeCreatedRangeFilterData, FileAttachment, InlineMessageFilterData, LocationFilterData,
                          Mail, MailAttachmentInfo, MailFilter, NameFilterData)
-from pyadps.storage import FilterMailCallbackData, Storage
+from pyadps.storage import (CopyMailsCallbackData, CopyMailsStage, EstimationDeleteMailsCallbackData,
+                            EstimationDeleteMailsStage, FilterMailCallbackData, Storage)
 
 
 class OutputFormat:
@@ -112,13 +113,96 @@ def create(repo_folder: str):
     storage.save_mail(mail=message, mail_attachment_infos=mail_attachment_infos, target_folder_path=repo_folder)
 
 
+class SearchCallback:
+    def __init__(self):
+        self.progressbar = None
+
+    def __call__(self, filter_mail_callback_data: FilterMailCallbackData):
+        if self.progressbar is None:
+            self.progressbar = click.progressbar(
+                length=filter_mail_callback_data.total_mails_number,
+                label='Searching messages...'
+            ).__enter__()
+
+        self.progressbar.update(1)
+
+        is_finished = filter_mail_callback_data.current_mail_idx + 1 == filter_mail_callback_data.total_mails_number
+        if is_finished:
+            self.progressbar.finish()
+            self.progressbar.__exit__(None, None, None)
+
+
+class CopyCallback:
+    def __init__(self):
+        self.progressbar = None
+        self.stage = None
+
+    def _finalize_progressbar(self):
+        self.progressbar.finish()
+        self.progressbar.__exit__(None, None, None)
+
+    def _create_progressbar(self, *args, **kwargs):
+        # finalizing the previous progressbar
+        if self.progressbar is not None:
+            self._finalize_progressbar()
+
+        self.progressbar = click.progressbar(*args, **kwargs).__enter__()
+
+    def __call__(self, copy_mails_callback_data: CopyMailsCallbackData):
+        # Stages: None -> ESTIMATION -> COPYING
+        if self.stage is None and copy_mails_callback_data.stage == CopyMailsStage.ESTIMATION:
+            self.stage = copy_mails_callback_data.stage
+            self._create_progressbar(length=copy_mails_callback_data.estimation_progress.total_mails_number,
+                                     label='Estimation of files to copy...')
+
+        if self.stage == CopyMailsStage.ESTIMATION and copy_mails_callback_data.stage == CopyMailsStage.COPYING:
+            self.stage = copy_mails_callback_data.stage
+            self._create_progressbar(length=copy_mails_callback_data.copying_progress.total_files_size_bytes,
+                                     label='Copying files...')
+
+        if self.stage == CopyMailsStage.ESTIMATION:
+            self.progressbar.update(1)
+        elif self.stage == CopyMailsStage.COPYING:
+            self.progressbar.update(copy_mails_callback_data.copying_progress.current_file_bytes)
+
+        if (copy_mails_callback_data.stage == CopyMailsStage.COPYING
+                and (copy_mails_callback_data.copying_progress.total_files_size_bytes
+                     == copy_mails_callback_data.copying_progress.copied_bytes)):
+            self._finalize_progressbar()
+
+
+class EstimationDeleteCallback(CopyCallback):
+    def __call__(self, estimation_delete_callback: EstimationDeleteMailsCallbackData):
+        # Stages: None -> SCANNING_TARGET_FILES -> SCANNING_ALL_FILES
+        if self.stage is None and estimation_delete_callback.stage == EstimationDeleteMailsStage.SCANNING_TARGET_FILES:
+            self.stage = estimation_delete_callback.stage
+            self._create_progressbar(length=estimation_delete_callback.callback_data.total_mails_number,
+                                     label='Searching files to delete...')
+
+        if (self.stage == EstimationDeleteMailsStage.SCANNING_TARGET_FILES
+                and estimation_delete_callback.stage == EstimationDeleteMailsStage.SCANNING_ALL_FILES):
+            self.stage = estimation_delete_callback.stage
+            self._create_progressbar(length=estimation_delete_callback.callback_data.total_mails_number,
+                                     label='Searching other files with attachments to delete...')
+
+        if self.progressbar:
+            self.progressbar.update(1)
+
+        if (estimation_delete_callback.stage == EstimationDeleteMailsStage.SCANNING_ALL_FILES
+                and (estimation_delete_callback.callback_data.current_mail_idx
+                     == estimation_delete_callback.callback_data.total_mails_number - 1)):
+            self._finalize_progressbar()
+
+
 def delete_messages_by_mail_paths(
     msg_paths: List[str],
     storage: Storage,
     confirm: bool,
-    print_list: bool
+    print_list: bool,
+    show_progressbar: bool,
 ):
-    attachment_paths_to_delete = storage.get_attachments_for_delete(msg_paths=msg_paths)
+    callback = EstimationDeleteCallback() if show_progressbar else None
+    attachment_paths_to_delete = storage.get_attachments_for_delete(msg_paths=msg_paths, callback=callback)
 
     if print_list:
         click.echo('Message files to delete:')
@@ -143,7 +227,8 @@ def delete_messages_by_mail_paths(
 @click.option('--days', type=click.INT, default=30)
 @click.option('--confirm/--no-confirm', type=click.BOOL, default=True)
 @click.option('--print-list/--no-print-list', type=click.BOOL, default=True)
-def clear(repo_folder: str, days: int, confirm: bool, print_list: bool):
+@click.option('--show-progressbar/--no-show-progressbar', type=click.BOOL, default=True)
+def clear(repo_folder: str, days: int, confirm: bool, print_list: bool, show_progressbar: bool):
     if not is_valid_repo_folder(repo_folder):
         click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
         raise click.Abort()
@@ -159,7 +244,8 @@ def clear(repo_folder: str, days: int, confirm: bool, print_list: bool):
         msg_paths=msg_paths,
         storage=storage,
         confirm=confirm,
-        print_list=print_list
+        print_list=print_list,
+        show_progressbar=show_progressbar,
     )
 
 
@@ -299,25 +385,6 @@ class OutputPrinter:
             self._print_func(count)
 
 
-class SearchCallback:
-    def __init__(self):
-        self.progressbar = None
-
-    def __call__(self, filter_mail_callback_data: FilterMailCallbackData):
-        if self.progressbar is None:
-            self.progressbar = click.progressbar(
-                length=filter_mail_callback_data.total_mails_number,
-                label='Searching messages...'
-            ).__enter__()
-
-        self.progressbar.update(1)
-
-        is_finished = filter_mail_callback_data.current_mail_idx + 1 == filter_mail_callback_data.total_mails_number
-        if is_finished:
-            self.progressbar.finish()
-            self.progressbar.__exit__(None, None, None)
-
-
 @cli.command('search', help='Searches messages')
 @click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
 @click.option('--datetime-from', type=click.DateTime(), default=datetime.now() - timedelta(days=30))
@@ -337,6 +404,14 @@ class SearchCallback:
                                 case_sensitive=False),
               default=OutputFormat.JSON)
 @click.option('--show-progressbar/--no-show-progressbar', type=click.BOOL, default=True)
+@click.option('--copy/--no-copy', 'copy_msg', type=click.BOOL, default=False,
+              help='Copy filtered files to another repo')
+@click.option('--delete/--no-delete', 'delete_msg', type=click.BOOL, default=False,
+              help='Delete filtered files to another repo')
+@click.option('--confirm-delete/--no-confirm-delete', type=click.BOOL, default=False,
+              help='ask confirmation before delete')
+@click.option('--print-list-to-delete/--no-print-list-to-delete', type=click.BOOL, default=False)
+@click.option('--target-repo-folder', type=click.STRING, default=None)
 def search(
     repo_folder: str,
     datetime_from: Optional[datetime],
@@ -353,10 +428,22 @@ def search(
     damping_distance_base_distance_meters: Optional[float],
     output_format: str,
     show_progressbar: bool,
+    copy_msg: bool,
+    delete_msg: bool,
+    confirm_delete: bool,
+    print_list_to_delete: bool,
+    target_repo_folder: Optional[str],
 ):
     if not is_valid_repo_folder(repo_folder):
-        click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
-        raise click.Abort()
+        raise click.Abort(f'The folder {repo_folder!r} is not valid repository. '
+                          f'Use command init for creating the repository')
+
+    if copy_msg and (target_repo_folder is None):
+        raise click.Abort('You should specify the target_repo_folder in case you want to copy the messages')
+
+    if target_repo_folder is not None and not is_valid_repo_folder(target_repo_folder):
+        raise click.Abort(f'The target folder {repo_folder!r} is not valid repository. '
+                          f'Use command init for creating the repository')
 
     storage = Storage(repo_folder)
 
@@ -378,10 +465,28 @@ def search(
     output_printer = OutputPrinter(output_format)
 
     search_callback = SearchCallback() if show_progressbar else None
+    copy_callback = CopyCallback() if show_progressbar else None
+
     count = 0
+    filtered_message_paths = []
     for search_result in storage.filter_mails(mail_filter, search_callback):
         output_printer.print_item(search_result.mail, search_result.mail_hashsum_hex, search_result.mail_path)
         count += 1
+
+        if copy_msg or delete_msg:
+            filtered_message_paths.append(search_result.mail_path)
+
+    if copy_msg:
+        storage.copy_mails(filtered_message_paths, target_repo_folder, copy_callback)  # type: ignore
+
+    if delete_msg:
+        delete_messages_by_mail_paths(
+            msg_paths=filtered_message_paths,
+            storage=storage,
+            confirm=confirm_delete,
+            print_list=print_list_to_delete,
+            show_progressbar=show_progressbar
+        )
 
     output_printer.print_count(count)
 
@@ -424,12 +529,14 @@ def get_msg_paths_by_user_input(
 @click.option('--msg-path', type=click.Path(exists=True, file_okay=True, dir_okay=False), default=None, required=False)
 @click.option('--confirm/--no-confirm', type=click.BOOL, default=True, help='ask confirmation before delete')
 @click.option('--print-list/--no-print-list', type=click.BOOL, default=True)
+@click.option('--show-progressbar/--no-show-progressbar', type=click.BOOL, default=True)
 def delete(
     repo_folder: str,
     hashsums: Optional[str],
     msg_path: Optional[str],
     confirm: bool,
-    print_list: bool
+    print_list: bool,
+    show_progressbar: bool,
 ):
     if not is_valid_repo_folder(repo_folder):
         click.echo(f'The folder {repo_folder!r} is not valid repository. Use command init for creating the repository')
@@ -446,7 +553,8 @@ def delete(
         msg_paths=msg_paths,
         storage=storage,
         confirm=confirm,
-        print_list=print_list
+        print_list=print_list,
+        show_progressbar=show_progressbar,
     )
 
 
@@ -461,11 +569,13 @@ def delete(
          'Warning: this option conflicts with the --path option'
 )
 @click.option('--msg-path', type=click.Path(exists=True, file_okay=True, dir_okay=False), default=None, required=False)
+@click.option('--show-progressbar/--no-show-progressbar', type=click.BOOL, default=True)
 def copy(
     source_repo_folder: str,
     target_repo_folder: str,
     hashsums: Optional[str],
     msg_path: Optional[str],
+    show_progressbar: bool,
 ):
     for repo_folder in [source_repo_folder, target_repo_folder]:
         if not is_valid_repo_folder(repo_folder):
@@ -480,7 +590,8 @@ def copy(
         storage=source_storage
     )
 
-    source_storage.copy_mails(msg_paths, target_repo_folder)
+    copy_callback = CopyCallback() if show_progressbar else None
+    source_storage.copy_mails(msg_paths, target_repo_folder, copy_callback)
 
 
 if __name__ == '__main__':
