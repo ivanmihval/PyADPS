@@ -5,8 +5,10 @@ import sys
 from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from hashlib import sha512
 from io import BytesIO
 from pathlib import PurePath
+from string import Template
 
 import geopy.distance
 import numpy as np
@@ -230,6 +232,66 @@ def generate_random_datetime(start, end, rng: FastRandomGenerator):
     )
 
 
+# https://stackoverflow.com/a/60703924
+def find_partial_collision_by_templates(
+    template1: str,
+    template2: str,
+    collision_length: int = 10,
+    ntries: int = 10_000_000
+):
+    tpl1 = Template(template1)
+    tpl2 = Template(template2)
+    def get_text_1(n_): return tpl1.substitute(templateVal=n_)
+    def get_text_2(n_): return tpl2.substitute(templateVal=n_)
+
+    seen = {}
+    for n in range(ntries):
+        h = sha512(get_text_1(n).encode('ascii')).hexdigest()[:collision_length]
+        seen[h] = n
+    for n in range(ntries):
+        h = sha512(get_text_2(n).encode('ascii')).hexdigest()[:collision_length]
+        if h in seen:
+            str_1 = get_text_1(seen[h])
+            str_2 = get_text_2(n)
+            return str_1, str_2
+
+
+def find_collisions():
+    template1 = 'Frank is one of the best students topicId$templateVal '
+    template2 = 'Frank is one of the top students topicId$templateVal '
+
+    str1, str2 = find_partial_collision_by_templates(template1, template2)
+
+    mail_1 = Mail(
+        date_created=datetime(2022, 2, 2),
+        recipient_coords=[CoordsData(1.0, 2.0)],
+        name='Johnny',
+        additional_notes=None,
+        inline_message=template1,
+        attachments=[FileAttachment('123.txt', len(str1), sha512(str1.encode()).hexdigest())]
+    )
+
+    mail_1_serialized = Mail.Schema().dump(mail_1)
+    mail_1_json_template_str = json.dumps(mail_1_serialized, indent=4, sort_keys=True)
+
+    mail_2 = Mail(
+        date_created=datetime(2022, 2, 2),
+        recipient_coords=[CoordsData(1.0, 2.0)],
+        name='Johnny',
+        additional_notes=None,
+        inline_message=template2,
+        attachments=[FileAttachment('333.txt', len(str2), sha512(str2.encode()).hexdigest())]
+    )
+
+    mail_2_serialized = Mail.Schema().dump(mail_2)
+    mail_2_json_template_str = json.dumps(mail_2_serialized, indent=4, sort_keys=True)
+
+    mail_1_json_str, mail_2_json_str = find_partial_collision_by_templates(
+        mail_1_json_template_str, mail_2_json_template_str)
+
+    return [s.encode() for s in (str1, str2, mail_1_json_str, mail_2_json_str)]
+
+
 def main():
     worldcities_path = PurePath(__file__).parents[1] / 'static_files/worldcities/worldcities.csv'
     first_names_path = PurePath(__file__).parents[1] / 'static_files/name_databases/all.txt'
@@ -358,6 +420,25 @@ def main():
         mail_path = adps_messages_path / (hashsum.hex_digest[:10] + '.json')
         with open(mail_path, 'wb') as output_json_file:
             output_json_file.write(mail_json_bytes)
+
+    print('Generating partial collisions...')
+    attachment_1_content, attachment_2_content, msg_json_1, msg_json_2 = find_collisions()
+    attachment_1_hashsum = sha512(attachment_1_content).hexdigest()
+    attachment_2_hashsum = sha512(attachment_2_content).hexdigest()
+    msg_json_1_hashsum = sha512(msg_json_1).hexdigest()
+    msg_json_2_hashsum = sha512(msg_json_2).hexdigest()
+
+    with open(adps_messages_path / (msg_json_1_hashsum[:10] + '.json'), 'wb') as output_json_file:
+        output_json_file.write(msg_json_1)
+
+    with open(adps_messages_path / (msg_json_2_hashsum[:10] + '_0' + '.json'), 'wb') as output_json_file:
+        output_json_file.write(msg_json_2)
+
+    with open(adps_attachments_path / (attachment_1_hashsum[:10] + '.bin'), 'wb') as output_attachment_file:
+        output_attachment_file.write(attachment_1_content)
+
+    with open(adps_attachments_path / (attachment_2_hashsum[:10] + '_0' + '.bin'), 'wb') as output_attachment_file:
+        output_attachment_file.write(attachment_2_content)
 
 
 if __name__ == '__main__':

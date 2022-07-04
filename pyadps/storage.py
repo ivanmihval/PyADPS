@@ -78,7 +78,7 @@ class CopyMailsCallbackData(NamedTuple):
 
 class Storage:
     MESSAGES_FOLDER = 'adps_messages'
-    ATTACHMENTS_FOLDERS = 'adps_attachments'
+    ATTACHMENTS_FOLDER = 'adps_attachments'
     HASHSUM_FILENAME_PART_LEN = 10
     MESSAGE_FILE_MAX_SIZE_BYTES = 4 * 1024  # 4 KB
 
@@ -107,7 +107,7 @@ class Storage:
         raise Exception(f'Could not get free path value for {path!r}')
 
     def find_attachment_path(self, hashsum_hex: str) -> str:
-        attachments_folder_path = PurePath(self.root_dir_path) / self.ATTACHMENTS_FOLDERS
+        attachments_folder_path = PurePath(self.root_dir_path) / self.ATTACHMENTS_FOLDER
 
         default_path = attachments_folder_path / (hashsum_hex[:self.HASHSUM_FILENAME_PART_LEN] + '.bin')
         default_paths = [default_path] if os.path.exists(default_path) else []
@@ -151,7 +151,7 @@ class Storage:
 
     def save_mail(self, mail: Mail, mail_attachment_infos: List[MailAttachmentInfo], target_folder_path: str):
         messages_folder = PurePath(target_folder_path) / self.MESSAGES_FOLDER
-        attachments_folder = PurePath(target_folder_path) / self.ATTACHMENTS_FOLDERS
+        attachments_folder = PurePath(target_folder_path) / self.ATTACHMENTS_FOLDER
 
         os.makedirs(messages_folder, exist_ok=True)
         os.makedirs(attachments_folder, exist_ok=True)
@@ -171,10 +171,7 @@ class Storage:
                 target_message_file.write(mail_json_bytes)
 
         for mail_attachment_info in mail_attachment_infos:
-            try:
-                attachment_path = self.find_attachment_path(mail_attachment_info.hashsum_hex)
-            except FileNotFoundError:
-                attachment_path = mail_attachment_info.path
+            attachment_path = mail_attachment_info.path
 
             target_file_search_result = self.get_free_file_path(
                 attachments_folder
@@ -225,7 +222,7 @@ class Storage:
         )
 
         messages_folder = PurePath(target_folder_path) / self.MESSAGES_FOLDER
-        attachments_folder = PurePath(target_folder_path) / self.ATTACHMENTS_FOLDERS
+        attachments_folder = PurePath(target_folder_path) / self.ATTACHMENTS_FOLDER
 
         os.makedirs(messages_folder, exist_ok=True)
         os.makedirs(attachments_folder, exist_ok=True)

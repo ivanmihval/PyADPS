@@ -33,7 +33,7 @@ def cli():
 @click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')
 def init(repo_folder: str):
     os.mkdir(os.path.join(repo_folder, Storage.MESSAGES_FOLDER))
-    os.mkdir(os.path.join(repo_folder, Storage.ATTACHMENTS_FOLDERS))
+    os.mkdir(os.path.join(repo_folder, Storage.ATTACHMENTS_FOLDER))
 
 
 def is_valid_repo_folder(repo_folder: str) -> bool:
@@ -42,7 +42,7 @@ def is_valid_repo_folder(repo_folder: str) -> bool:
     except (NotADirectoryError, FileNotFoundError):
         return False
 
-    return Storage.MESSAGES_FOLDER in directories and Storage.ATTACHMENTS_FOLDERS in directories
+    return Storage.MESSAGES_FOLDER in directories and Storage.ATTACHMENTS_FOLDER in directories
 
 
 @cli.command('create', help='Interactive command for creating a message')
