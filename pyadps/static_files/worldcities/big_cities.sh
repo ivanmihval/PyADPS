@@ -1,0 +1,1 @@
+ awk -F, 'BEGIN {OFS=","} {if(NR==1) {print}  gsub(/"/, "", $10); if ($10 + 0 > 100000) {$10 = "\""$10"\""; print} }' pyadps/static_files/worldcities/worldcities.csv  > pyadps/static_files/worldcities/big_cities.csv
