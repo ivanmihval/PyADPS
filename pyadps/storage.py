@@ -3,6 +3,8 @@ import itertools
 import json
 import os
 import os.path
+import string
+from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from glob import glob, iglob
@@ -10,7 +12,7 @@ from io import BytesIO
 from json import load
 from pathlib import Path, PurePath
 from shutil import copyfile
-from typing import Callable, Collection, Generator, List, NamedTuple, Optional, Union
+from typing import Callable, Collection, Dict, Generator, List, NamedTuple, Optional, Tuple, Union
 
 from pyadps.helpers import calculate_hashsum, calculate_hashsum_hex_from_file
 from pyadps.mail import Mail, MailAttachmentInfo, MailFilter
@@ -182,6 +184,7 @@ class Storage:
             if not target_file_search_result.is_exist:
                 copyfile(attachment_path, target_file_search_result.path)
 
+    # todo: Check that source_folder != target_folder
     def copy_mails(
         self,
         msg_paths: Collection[Union[str, Path]],
@@ -254,6 +257,44 @@ class Storage:
                         copied_bytes=copied_bytes,
                     )
                 ))
+
+    def get_correct_filenames_mapping_after_delete(self) -> List[Tuple[str, str]]:
+        attachments_folder_path = PurePath(self.root_dir_path) / self.ATTACHMENTS_FOLDER
+        attachments_paths = glob(f'{attachments_folder_path}/*.bin')
+        partial_hashsums_with_collisions = set()
+        hex_digest = set(ch.lower() for ch in string.hexdigits)
+        for attachment_path in attachments_paths:
+            attachment_filename = os.path.basename(attachment_path)
+            if '_' not in attachment_filename:
+                continue
+            partial_hashsum_part = attachment_filename[:self.HASHSUM_FILENAME_PART_LEN]
+            if hex_digest.issuperset(partial_hashsum_part):
+                partial_hashsums_with_collisions.add(partial_hashsum_part)
+
+        if not partial_hashsums_with_collisions:
+            return []
+
+        filenames_by_partial_hashsum: Dict[str, List[str]] = defaultdict(lambda: list())
+        for attachment_path in attachments_paths:
+            attachment_filename = os.path.basename(attachment_path)
+            partial_hashsum_part = attachment_filename[:self.HASHSUM_FILENAME_PART_LEN]
+            if partial_hashsum_part in partial_hashsums_with_collisions:
+                filenames_by_partial_hashsum[partial_hashsum_part].append(attachment_filename)
+
+        result: List[Tuple[str, str]] = []
+        for partial_hashsum_part, current_filenames in filenames_by_partial_hashsum.items():
+            init_sorted_filenames = sorted(current_filenames)
+            resulted_sorted_filenames = []
+            for i in range(len(init_sorted_filenames)):
+                filename = f'{partial_hashsum_part}.bin' if i == 0 else f'{partial_hashsum_part}_{(i-1):04}.bin'
+                resulted_sorted_filenames.append(filename)
+
+            if init_sorted_filenames != resulted_sorted_filenames:
+                for before, after in zip(init_sorted_filenames, resulted_sorted_filenames):
+                    if before != after:
+                        result.append((str(attachments_folder_path / before), str(attachments_folder_path / after)))
+
+            return result
 
     def get_attachments_for_delete(
         self,

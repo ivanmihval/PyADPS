@@ -221,6 +221,10 @@ def delete_messages_by_mail_paths(
     for file_path in [*msg_paths, *attachment_paths_to_delete]:
         os.remove(file_path)
 
+    rename_mapping = storage.get_correct_filenames_mapping_after_delete()
+    for before_path, after_path in rename_mapping:
+        os.rename(before_path, after_path)
+
 
 @cli.command('clear', help='Deletes expired messages with attachments linked to them')
 @click.argument('repo_folder', type=click.Path(exists=True, file_okay=False), default='.')

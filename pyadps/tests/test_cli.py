@@ -550,6 +550,11 @@ class TestDelete:
         storage.save_mail(mail_1, attachment_infos_1, str(source_dir))
         storage.save_mail(mail_2, attachment_infos_2, str(source_dir))
 
+        # Test working with partial collisions
+        open(source_dir / 'adps_attachments' / '123abcdeff_0134.bin', 'wb').write(b'12345')
+        open(source_dir / 'adps_attachments' / '123abcdeff_6666.bin', 'wb').write(b'1234567')
+        open(source_dir / 'adps_attachments' / '123abcdeff_6667.bin', 'wb').write(b'12345678')
+
         cmd_option = (f'{option}={tmp_path / "source" / "adps_messages" / "647ebe7b8d.json"}'
                       if option == '--msg-path'
                       else f'{option}=647ebe7b8d,2492374abcde')
@@ -561,6 +566,15 @@ class TestDelete:
         assert 'Attachment files to delete' in result.output
         assert 'e711a66e46.bin' in result.output
         assert 'Do you want to delete these files?'
+
+        assert os.path.isfile(source_dir / 'adps_attachments' / '123abcdeff.bin')
+        assert open(source_dir / 'adps_attachments' / '123abcdeff.bin', 'rb').read() == b'12345'
+
+        assert os.path.isfile(source_dir / 'adps_attachments' / '123abcdeff_0000.bin')
+        assert open(source_dir / 'adps_attachments' / '123abcdeff_0000.bin', 'rb').read() == b'1234567'
+
+        assert os.path.isfile(source_dir / 'adps_attachments' / '123abcdeff_0001.bin')
+        assert open(source_dir / 'adps_attachments' / '123abcdeff_0001.bin', 'rb').read() == b'12345678'
 
 
 class TestCopy:
