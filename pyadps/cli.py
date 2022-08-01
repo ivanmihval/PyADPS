@@ -4,6 +4,7 @@ import os
 import os.path
 from datetime import datetime, timedelta
 from pathlib import PurePath
+from shutil import copyfile
 from typing import List, Optional, Union
 
 import click
@@ -596,6 +597,32 @@ def copy(
 
     copy_callback = CopyCallback() if show_progressbar else None
     source_storage.copy_mails(msg_paths, target_repo_folder, copy_callback)
+
+
+@cli.command('export', help='Export one message to another folder.')
+@click.argument('msg_path', type=click.Path(exists=True, file_okay=True, dir_okay=False), required=True)
+@click.argument('export_folder', type=click.Path(file_okay=False, dir_okay=True))
+@click.option('--abort-on-not-empty-folder/--not-abort-on-not-empty-folder', type=click.BOOL, default=True)
+def export(msg_path: str, export_folder: str, abort_on_not_empty_folder: bool):
+    repo_folder = str(PurePath(msg_path).parents[1])
+    if not is_valid_repo_folder(repo_folder):
+        click.echo(f'The folder {repo_folder!r} is not valid repository. '
+                   f'Use command init for creating the repository')
+        raise click.Abort()
+
+    storage = Storage(repo_folder)
+    mail = storage.load_mail(msg_path)
+
+    os.makedirs(export_folder, exist_ok=True)
+    if os.listdir(export_folder) and abort_on_not_empty_folder:
+        click.echo(f'The {export_folder!r} folder should be empty. '
+                   'Pass "--not-abort-on-not-empty-folder" to avoid this error or specify an empty folder.')
+        raise click.Abort()
+
+    copyfile(msg_path, PurePath(export_folder) / os.path.basename(msg_path))
+    for attachment in mail.attachments:
+        attachment_path = storage.find_attachment_path(attachment.hashsum_hex)
+        copyfile(attachment_path, PurePath(export_folder) / attachment.filename)
 
 
 if __name__ == '__main__':

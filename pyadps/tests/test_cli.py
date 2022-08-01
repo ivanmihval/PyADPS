@@ -10,8 +10,8 @@ import pytest
 from click.testing import CliRunner
 from freezegun import freeze_time
 
-from pyadps.cli import (OutputPrinter, build_filter, clear, copy, create, delete, get_default_damping_distance_filter,
-                        init, search)
+from pyadps.cli import (OutputPrinter, build_filter, clear, copy, create, delete, export,
+                        get_default_damping_distance_filter, init, search)
 from pyadps.mail import (AdditionalNotesFilterData, AttachmentFilterData, CoordsData, DampingDistanceFilterData,
                          DatetimeCreatedRangeFilterData, InlineMessageFilterData, LocationFilterData, Mail, MailFilter,
                          NameFilterData)
@@ -649,3 +649,74 @@ class TestCopy:
 
         assert list(os.listdir(target_dir / 'adps_messages')) == ['647ebe7b8d.json']
         assert list(os.listdir(target_dir / 'adps_attachments')) == ['e711a66e46.bin', '3627909a29.bin']
+
+
+class TestExport:
+    def test_repo_does_not_exist(self, tmp_path):
+        result = CliRunner().invoke(export, [str(tmp_path)+'not_exists'])  # type: ignore
+        assert result.exit_code == 2
+
+    def test_ok(self, tmp_path):
+        originals_path = tmp_path / 'originals'
+        os.makedirs(originals_path)
+
+        attachment_1_content = b'12345'
+        attachment_2_content = b'12345677899'
+        attachment_3_content = b'123123123123'
+
+        with open(originals_path / 'test.txt', 'wb') as file_:
+            file_.write(attachment_1_content)
+
+        with open(originals_path / 'document', 'wb') as file_:
+            file_.write(attachment_2_content)
+
+        with open(originals_path / 'document.txt', 'wb') as file_:
+            file_.write(attachment_1_content)
+
+        with open(originals_path / 'document.bin', 'wb') as file_:
+            file_.write(attachment_3_content)
+
+        mail_1, attachment_infos_1 = Mail.from_attachment_streams(
+            date_created=datetime(2018, 1, 1),
+            recipient_coords=[CoordsData(55.0, 37.0)],
+            name='Donald Smith',
+            additional_notes=None,
+            inline_message='Please see 2 attachments',
+            files=[
+                open(originals_path / 'test.txt', 'rb'),
+                open(originals_path / 'document', 'rb'),
+                open(originals_path / 'document.txt', 'rb')
+            ]
+        )
+
+        mail_2, attachment_infos_2 = Mail.from_attachment_streams(
+            date_created=datetime(2018, 3, 4),
+            recipient_coords=[CoordsData(54.0, 36.0)],
+            name='abcde@abcde.com',
+            additional_notes=None,
+            inline_message='The document is in attachment',
+            files=[open(originals_path / 'document.txt', 'rb'), open(originals_path / 'document.bin', 'rb')]
+        )
+
+        source_dir = tmp_path / 'source'
+        os.makedirs(source_dir)
+        os.makedirs(tmp_path / 'source' / 'adps_messages')
+        os.makedirs(tmp_path / 'source' / 'adps_attachments')
+        storage = Storage(str(source_dir))
+        storage.save_mail(mail_1, attachment_infos_1, str(source_dir))
+        storage.save_mail(mail_2, attachment_infos_2, str(source_dir))
+
+        export_dir = tmp_path / 'export'
+
+        result = CliRunner().invoke(export, [str(source_dir / 'adps_messages' / '647ebe7b8d.json'),  # type: ignore
+                                             str(export_dir)])
+
+        assert result.exit_code == 0
+
+        assert set(os.listdir(export_dir)) == {'test.txt', 'document', 'document.txt', '647ebe7b8d.json'}
+
+        # Test copy to not empty folder
+        result = CliRunner().invoke(export, [str(source_dir / 'adps_messages' / '647ebe7b8d.json'),  # type: ignore
+                                             str(export_dir)])
+
+        assert result.exit_code == 1
