@@ -99,12 +99,12 @@ class Storage:
 
         root, ext = os.path.splitext(path)
         for i in range(attempts):
-            new_path = f'{root}_{i}{ext}'
+            new_path = f'{root}_{i:04}{ext}'
             if not os.path.isfile(new_path):
-                return FileSearchResult(path, False)
+                return FileSearchResult(new_path, False)
 
             if calculate_hashsum_hex_from_file(new_path) == hashsum_hex:
-                return FileSearchResult(path, True)
+                return FileSearchResult(new_path, True)
 
         raise Exception(f'Could not get free path value for {path!r}')
 

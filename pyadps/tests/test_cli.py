@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+import base64
 import json
 import os
+import shutil
 from datetime import datetime
 from os import listdir
 from unittest.mock import Mock
@@ -19,6 +21,34 @@ from pyadps.storage import Storage
 
 MOSCOW_COORDS = CoordsData(55.75222, 37.61556)
 SOMEWHERE_ON_ATLANTIC_OCEAN = CoordsData(1.4487406, -2.6771144)
+
+PARTIAL_COLLISION_FILE_B64_1 = """
+ewogICAgImFkZGl0aW9uYWxfbm90ZXMiOiBudWxsLAogICAgImF0dGFjaG1lbnRzIjogWwogICAgICAgIHsKICAgIC
+AgICAgICAgImZpbGVuYW1lIjogIjMzMy50eHQiLAogICAgICAgICAgICAiaGFzaHN1bV9hbGciOiAic2hhNTEyIiwK
+ICAgICAgICAgICAgImhhc2hzdW1faGV4IjogImE4OTc5NGFlYmE3NWVjM2I3MTE3MzVmMTc1Nzc3NGY1ZWExN2E0Yj
+RiOTdjNjljYmIwMGRlMGUzMmZhOTU2ZWZmZjI1YzkxYmQ3ZjRmMWE5NTU3YTE3ZTdlZTJjM2FiMmYxNDFhNDhiODk5
+YjI0MjA1NDlmYzUxZjhiMjcwZDkxIiwKICAgICAgICAgICAgInNpemVfYnl0ZXMiOiA0NgogICAgICAgIH0KICAgIF
+0sCiAgICAiZGF0ZV9jcmVhdGVkIjogIjIwMjItMDItMDJUMDA6MDA6MDAiLAogICAgImlubGluZV9tZXNzYWdlIjog
+IkZyYW5rIGlzIG9uZSBvZiB0aGUgdG9wIHN0dWRlbnRzIHRvcGljSWQxMTM1NyAiLAogICAgIm1pbl92ZXJzaW9uIj
+ogIjEuMCIsCiAgICAibmFtZSI6ICJKb2hubnkiLAogICAgInJlY2lwaWVudF9jb29yZHMiOiBbCiAgICAgICAgewog
+ICAgICAgICAgICAibGF0IjogMS4wLAogICAgICAgICAgICAibG9uIjogMi4wCiAgICAgICAgfQogICAgXSwKICAgIC
+J2ZXJzaW9uIjogIjEuMCIKfQ=="""
+
+PARTIAL_COLLISION_FILE_B64_2 = """
+ewogICAgImFkZGl0aW9uYWxfbm90ZXMiOiBudWxsLAogICAgImF0dGFjaG1lbnRzIjogWwogICAgICAgIHsKICAgIC
+AgICAgICAgImZpbGVuYW1lIjogIjEyMy50eHQiLAogICAgICAgICAgICAiaGFzaHN1bV9hbGciOiAic2hhNTEyIiwK
+ICAgICAgICAgICAgImhhc2hzdW1faGV4IjogImE4OTc5NGFlYmEwYmI3ZGY2ZTg3M2ZlNWFjOTFjZTY1MmJiMGY2Nm
+E4YTBmYmQ3OWUzNjJmN2I4YzhlOGM3OGFjOWZjYjg2NjYwZjc4ODIwYjUzN2ZkMjlhY2UwZDczYzA3NzM0OTllOTM2
+M2Y1YzUyNDgzYmFkYzkwZDgyNGJhIiwKICAgICAgICAgICAgInNpemVfYnl0ZXMiOiA0OAogICAgICAgIH0KICAgIF
+0sCiAgICAiZGF0ZV9jcmVhdGVkIjogIjIwMjItMDItMDJUMDA6MDA6MDAiLAogICAgImlubGluZV9tZXNzYWdlIjog
+IkZyYW5rIGlzIG9uZSBvZiB0aGUgYmVzdCBzdHVkZW50cyB0b3BpY0lkMjUyNTA1MCAiLAogICAgIm1pbl92ZXJzaW
+9uIjogIjEuMCIsCiAgICAibmFtZSI6ICJKb2hubnkiLAogICAgInJlY2lwaWVudF9jb29yZHMiOiBbCiAgICAgICAg
+ewogICAgICAgICAgICAibGF0IjogMS4wLAogICAgICAgICAgICAibG9uIjogMi4wCiAgICAgICAgfQogICAgXSwKIC
+AgICJ2ZXJzaW9uIjogIjEuMCIKfQ==
+"""
+
+PARTIAL_COLLISION_FILE_B64_3 = 'RnJhbmsgaXMgb25lIG9mIHRoZSB0b3Agc3R1ZGVudHMgdG9waWNJZDI4NDA1IA=='
+PARTIAL_COLLISION_FILE_B64_4 = 'RnJhbmsgaXMgb25lIG9mIHRoZSBiZXN0IHN0dWRlbnRzIHRvcGljSWQ3MjA5Mjgg'
 
 
 class TestRepoInit:
@@ -490,6 +520,88 @@ class TestSearch:
         assert os.path.isfile(target_dir / 'adps_attachments' / '3627909a29.bin')
         assert not os.path.isfile(target_dir / 'adps_attachments' / 'e711a66e46.bin')
         assert os.path.isfile(target_dir / 'adps_attachments' / '158911a346.bin')
+
+    def test_copy_with_partial_collisions(self, tmp_path):
+        originals_path = tmp_path / 'originals'
+        os.makedirs(originals_path)
+
+        attachment_1_content = b'12345'
+        attachment_2_content = b'12345677899'
+        attachment_3_content = b'123123123123'
+
+        with open(originals_path / 'test.txt', 'wb') as file_:
+            file_.write(attachment_1_content)
+
+        with open(originals_path / 'document', 'wb') as file_:
+            file_.write(attachment_2_content)
+
+        with open(originals_path / 'document.txt', 'wb') as file_:
+            file_.write(attachment_1_content)
+
+        with open(originals_path / 'document.bin', 'wb') as file_:
+            file_.write(attachment_3_content)
+
+        with open(originals_path / 'collision_1.txt', 'wb') as file_:
+            file_.write(base64.b64decode(PARTIAL_COLLISION_FILE_B64_1))
+
+        with open(originals_path / 'collision_2.txt', 'wb') as file_:
+            file_.write(base64.b64decode(PARTIAL_COLLISION_FILE_B64_2))
+
+        with open(originals_path / 'collision_3.txt', 'wb') as file_:
+            file_.write(base64.b64decode(PARTIAL_COLLISION_FILE_B64_3))
+
+        with open(originals_path / 'collision_4.txt', 'wb') as file_:
+            file_.write(base64.b64decode(PARTIAL_COLLISION_FILE_B64_4))
+
+        mail_1, attachment_infos_1 = Mail.from_attachment_streams(
+            date_created=datetime(2018, 1, 1),
+            recipient_coords=[CoordsData(55.0, 37.0)],
+            name='donald@smith.com',
+            additional_notes='Moscow City, ul. Vavilova',
+            inline_message='Please see 2 attachments',
+            files=[
+                open(originals_path / 'test.txt', 'rb'),
+                open(originals_path / 'document', 'rb'),
+                open(originals_path / 'document.txt', 'rb')
+            ]
+        )
+
+        source_dir = tmp_path / 'source'
+        os.makedirs(source_dir)
+        os.makedirs(source_dir / 'adps_messages')
+        os.makedirs(source_dir / 'adps_attachments')
+
+        target_dir = tmp_path / 'target'
+        os.makedirs(target_dir)
+        os.makedirs(target_dir / 'adps_messages')
+        os.makedirs(target_dir / 'adps_attachments')
+
+        storage = Storage(str(source_dir))
+
+        # Prepare source repository
+        storage.save_mail(mail_1, attachment_infos_1, str(source_dir))
+        shutil.copy(originals_path / 'collision_1.txt', source_dir / 'adps_messages' / 'c850eddde6_0000.json')
+        shutil.copy(originals_path / 'collision_2.txt', source_dir / 'adps_messages' / 'c850eddde6.json')
+        shutil.copy(originals_path / 'collision_3.txt', source_dir / 'adps_attachments' / 'a89794aeba_0000.bin')
+        shutil.copy(originals_path / 'collision_4.txt', source_dir / 'adps_attachments' / 'a89794aeba.bin')
+
+        assert set(os.listdir(source_dir / 'adps_messages')) == {
+            'c850eddde6.json', 'c850eddde6_0000.json', '1f478f4d9d.json'}
+        assert set(os.listdir(source_dir / 'adps_attachments')) == {
+            '3627909a29.bin', 'a89794aeba_0000.bin', 'e711a66e46.bin', 'a89794aeba.bin'}
+
+        result = CliRunner().invoke(
+            search,  # type: ignore
+            [str(source_dir), '--datetime-from=2010-01-01', '--datetime-to=2030-01-01',
+             '--copy', '--target-repo-folder', target_dir]
+        )
+        assert result.exit_code == 0
+
+        assert set(os.listdir(target_dir / 'adps_messages')) == {
+            'c850eddde6.json', 'c850eddde6_0000.json', '1f478f4d9d.json'}
+        assert set(os.listdir(target_dir / 'adps_attachments')) == {
+            'a89794aeba_0000.bin', 'a89794aeba.bin', 'e711a66e46.bin', '3627909a29.bin'
+        }
 
 
 class TestDelete:
