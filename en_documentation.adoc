@@ -1,0 +1,543 @@
+= ADPS - Amateur Digital Post Service =
+Author: Ivan Mikhailov <ivanmihval@yandex.ru>
+:toc:
+
+ADPS is an opensource https://en.wikipedia.org/wiki/Sneakernet[sneakernet] solution which uses the idea of common post service. It was designed to operate when the Internet is not accessible. It uses removable data storages to communicate between nodes like floppy net. Unlike floppy net (as a part of FidoNet) it does not have any hierarchy, so everyone can start using this with no need of registration by the goverment identity document. This network uses a geographical coordinate for message addressation. It has simple design so it's easy to build your own implementation of ADPS. Unlike the modern communication services the users have more flexibility but in the same time more responsibility for delivering messages. Currently it has two implementation. One is written on Python and use CLI. Another one is written on C# (.NET 4.0) and was designed to work on wide range of OS from Windows XP to Windows 10 and it has GUI written on WPF.
+
+== Repository ==
+
+All messages are stored in the repository. Repository is a folder which contains 2 another folders:
+
+. `adps_attachments` - contains attachment files with `.bin` extension.
+. `adps_messages` - contains message files with `.json` extension.
+
+Attachments are linked to the messages. Message may contain no attachment, may contain 1 attachment, may contain 5 attachments.
+
+=== Creating new repository ===
+
+* Python: `python -m pyadps.cli init [REPO_FOLDER (by default it's current folder)]`
+* SharpADPS: `Files -> New repository...`
+
+=== File naming ===
+
+Due to the simple design of this software there is no complex components for the indexing of the messages and the attachments. ADPS uses special file naming for quick searching of the attachments. So every file should contain the first 10 letters of the sha512's hex output. Here is an example of the `tree` output:
+
+----
+adps_attachments
+├── e0b81be475.bin
+└── f3b44b6f57.bin
+└── f3b44b6f57_0000.bin
+└── f3b44b6f57_0001.bin
+adps_messages
+└── e882cef10f.json
+└── abc44b6f57.json
+----
+
+You can see 3 attachment files with the partial collision. Technically it's possible but the probability of this case is pretty low. If the attachment filename contains 10 hex letters, the folder contains up to `16^10` or `2^40` or about `10^12` files with unique partial hashsums. Files with different hashsums but mutual partial collisions slow down the speed of working, so maybe you need to refuse the message from another node if you suspect it tries flooding by forging these files with the same partial collision.
+
+== Message ==
+
+Message is a `.json` file which is located in the `adps_messages` folder of the repository. The size of the message *is limited by 4096 bytes*. The reason of this limitation is faster serialization of the message. Example:
+
+----
+{
+    "additional_notes": "Pls deliver to house N54 to Mr. Scott",
+    "attachments": [
+        {
+            "filename": "New Contract.docx",
+            "hashsum_alg": "sha512",
+            "hashsum_hex": "9b6b1b9d89d6bc6a32bf63f8d31de5e1b9c4e0784d6a56b1b01de845431dbdc1214c70f3358f59d33779651f9959b088905834094fdbec92435451ad56b1d612",
+            "size_bytes": 7076
+        }
+    ],
+    "date_created": "2022-09-30T18:43:53",
+    "inline_message": "Hi, I am James, the new contract is attached to the message, please print, sign and send me back before the 10 of October. I gonna return to India in few weeks. Thx.",
+    "min_version": "1.0",
+    "name": "Scott",
+    "recipient_coords": [
+        {
+            "lat": 20.025769,
+            "lon": 73.766500
+        }
+    ],
+    "version": "1.0"
+}
+----
+
+Let's break down the parts of the message file:
+
+* `name` is the first identity of the recipient after the coordinates. It should be short and should make able to identify the recipient. For example it can be an email or a phone number or even ICQ's UIN. It's important to say that this field is *case-sensitive* for current filter implementations. This field is required for every message.
+
+* `inline_message` may contain short message, like SMS. Due to the limit of 4KiB by one message file it doesn't contain much information. If you need to send more information use attachments.
+
+* `additional_notes` usually is `null`. But in some cases it can contain important info for routing the message. For example one node could add some helpful info for the next nodes in order to deliver the message. It's very important to avoid changing the message after the creation because it'll also change the hashsum and the recipient may receive multiple messages with almost the same content except of the `additional_notes` field. But it's better to deliver several same messages than no one.
+
+* `date_created` is the core of the `TTL` (Time To Live) mechanic. It should contain datetime in `YYYY-MM-DDThh:mm:ss` format. Both 2 current implementaions by default filter messages with the range `(30 days before; 3 days ahead)`. The lower boundary implements the `TTL`, the higher boundary doesn't allow users to abuse the `TTL` system but accepts the messages created on computers with different timezones and time errors. So generally the mail should be delivered in 30 days after the creation time or it'll be probably lost.
+
+* `recipient_coords` is the main field used for filtering the messages. It's the list of the coordinates. The desicion of using of the list instead of one coordinate adds the multicast feature (you can send one message to different locations simultaneously) and you can manually route the message. So if you know that the transport flow between `A` and `B` is low you can divide the route to several another routes with higher flows. For example if the transport flows are like:
+
+----
++---------+
+|       -F|
+|      /  |
+|    -D-  |
+|   /   \ |
+|A-C     B|
+|   \   / |
+|    -E-  |
++---------+
+----
+
+you should specify the coordinates of the `C`, `D`, `E`, `B` points in order to send mail from `A` to `B`. Please don't add too many coordinates to the list in order to prevent flooding in the nodes' storages.
+
+* `attachments` contains attachment entities. The attachment entity contains filename, size, sha512 hashsum values. The hashsum value inside the message makes possible to find the attachment file in adequate (for offline using) time.
+
+* `version` is currently `1.0`. It is the current schema verion. It can be helpful when the application decides how to parse the message file.
+
+* `min_version` is also `1.0`. In future versions the implementation should compare `version` and `min_version` alphabetically. If `min_version` is more than the `max supported version` of the application (not the previous field) the application should refuse the processing of the message.
+
+=== Creating new message ===
+
+* Python: `python -m pyadps.cli create [REPO_FOLDER (by default it's current folder)]` (interactive console mode)
+* SharpADPS: `Files -> New mail...`
+
+== Filtering the messages ==
+
+When you transfer messages from one node to another you probably don't need to transfer all mails, you can filter most important ones for the target node. So every message goes through the filters. If it passes all the filters it is in filtered messages list and you can copy them or delete. If you apply 2 location filters the message is considered as filtered if it passed at least one of them. The scheme of the filtering process is below. Any filter might be turn off, in this case the message is automatically passed by this filter. The order of the filters is not fixed, in your implementations you can apply them in any order you want.
+
+On C# implementation you can open the filter dialog via `Filter -> Apply filters...`. On Python implementation you can add some flags defining filters you need, see examples below.
+
+----
+                                       
+                 +----+                
+                 |NAME|                
+                 +-|--+                
+                   |                   
+           +-------|--------+          
+           |ADDITIONAL NOTES|          
+           +-------|--------+          
+                   |                   
+            +------|-------+           
+         +---INLINE MESSAGE---+        
+         |  +--------------+  |        
+         |                    |        
+         |                    |        
++--------|--------+  +--------|-------+
+|SIMPLE COORDINATE|  |SMART COORDINATE|
+|     FILTER      |  |     FILTER     |
++--------|--------+  +--------|-------+
+         |                    |        
+         |                    |        
+         +---------|----------+        
+                   |                   
+     +-------------|--------------+    
+     |ATTACHMENT SIZE (ONLY ON C#)|    
+     +-------------|--------------+    
+                   |                   
+          +--------|---------+         
+          |ATTACHMENT HASHSUM|         
+          +--------|---------+         
+                   |                   
+          +--------|--------+          
+          |DATE RANGE FILTER|          
+          +-----------------+   
+----
+
+By default the date range filter is on. The date range is specified from `30 days ago` to `3 days ahead`.
+
+=== Filter by name ===
+
+This filter search messages whose `name` field *are equal* to the query. Python implementation usage:
+
+----
+python -m pyadps.cli search --name "john@john.com" [REPO FOLDER (by default it's current folder)]
+----
+
+Examples:
+
+[%header,format=csv]
+|===
+Name in message,Name in query,Result
+john@john.com,john@john.com,PASSED
+john@john.com,JOHN@JOHN.COM,NOT PASSED
+john@john.com,something-another,NOT PASSED
+|===
+
+=== Filter by additional notes ===
+
+This filter checks if the query is a substring of the message's additional notes. The case is not important. Python implementation usage:
+
+----
+python -m pyadps.cli search --additional-notes="one two three four" [REPO FOLDER (by default it's current folder)]
+----
+
+Examples:
+
+[%header,format=csv]
+|===
+Additional notes in message,Additional notes in query,Result
+john@john.com,john@john.com,PASSED
+john@john.com,JOHN@JOHN.COM,PASSED
+john@john.com,something-another,NOT PASSED
+john@john.com,JOHN@,PASSED
+<null>,john@john.com,NOT PASSED
+|===
+
+=== Filter by inline message ===
+
+This filter works like the previous one but for the inline message value of the message, so I'll just copypase examples here =). Python implementation usage:
+
+----
+python -m pyadps.cli search --inline-message="one two three four" [REPO FOLDER (by default it's current folder)]
+----
+
+Examples:
+
+[%header,format=csv]
+|===
+Inline message in message,Inline message in query,Result
+john@john.com,john@john.com,PASSED
+john@john.com,JOHN@JOHN.COM,PASSED
+john@john.com,something-another,NOT PASSED
+john@john.com,JOHN@,PASSED
+<null>,john@john.com,NOT PASSED
+|===
+
+
+=== (Simple) Coordinate filter ===
+
+It's the main filter supposed to use. You should specify the central point and the radius. All messages in this "circle" will pass the filter. Since a coordinate field is a list, the filter is applied to every coordinate until the first match. Python implementation usage:
+
+----
+python -m pyadps.cli search --latitude=55.744 --longitude=37.626 --radius-meters=35000 [REPO FOLDER (by default it's current folder)]
+----
+
+Examples:
+
+[%header,format=csv]
+|===
+Coordinate in message,Coordinate in query,Radius in query (kilometers),Result
+59.93863;30.31413 (Saint Petersburg),55.75222;37.61556 (Moscow),800,PASSED
+56.8519;60.6122 (Yekaterinburg),55.75222;37.61556 (Moscow),800,NOT PASSED
+|===
+
+=== Smart coordinate filter (or Damping Distance Filter) ===
+
+This filter might be usefull when you take messages to the node associated with a big city. The idea is more populated city means higher probability that it has a courier that can go to the city you need. If in the previous city the input parameter are central point and radius, this filter depends on two other parameters: central point and base distance. By these parameters it calculates the probaility by the following formula: `p = 2^(-distance/base_distance)`. The number range is from 0 to 1. After this the program calls `random()` which returns random number from 0 to 1. If the `random()` value is less than calculated function value the message considered as passed this filter. On C# implementation you can't specify the base distance directly, instead it calculates by an empiric formula using population data from the https://simplemaps.com/data/world-cities[simplemaps.com] dataset. The empiric formula is: `base_distance (meters) = population / 10`. The filter has 5% threshold, so if the calculated probability is less than 0.05 the message automatically fails the filter. Let's see the examples of the filter results:
+
+[%header,format=csv]
+|===
+Coordinate in message,Central point in query,Distance between cities,Population of the central point city,Base distance,Probability
+59.93863;30.31413 (Saint Petersburg),55.75222;37.61556 (Moscow),634 km,17125000,1712 km,77%
+56.8519;60.6122 (Yekaterinburg),55.75222;37.61556 (Moscow),1417 km,17125000,1712 km,56%
+55.0415;82.9346 (Novosibirsk),55.75222;37.61556 (Moscow),2811 km,17125000,1712 km,32%
+
+55.75222;37.61556 (Moscow),59.93863;30.31413 (Saint Petersburg),634 km,5351935,535 km,44%
+55.75222;37.61556 (Moscow),56.8519;60.6122 (Yekaterinburg),1417 km,1468833,146 km,0.1% (< 5%)
+55.75222;37.61556 (Moscow),55.0415;82.9346 (Novosibirsk),2811 km,1602915,160 km,0.0005% (< 5%)
+|===
+
+In order to activate the filter in C# you need to fill the data of the `Simple coordinate filter`, after that enable `Damping Distance Filter`, click right mouse button on population input and click `Find nearest city`.
+
+On the Python implementation you can specify the base distance directly or fill it empty, then it'll search in the dataset the population like in C# implementation:
+
+----
+python -m pyadps.cli search --damping-distance-latitude=55.744 --damping-distance-longitude=37.626 --damping-distance-base-distance-meters=2000000 [REPO FOLDER (by default it's current folder)]
+----
+
+or if you want to use the dataset, just omit the `--damping-distance-base-distance-meters` parameter:
+
+----
+python -m pyadps.cli search --damping-distance-latitude=55.744 --damping-distance-longitude=37.626 [REPO FOLDER (by default it's current folder)]
+----
+
+=== Attachment size filter ===
+
+This filter is available only in C# implementation. The input data is maximum attachment size in bytes. It filters message when all attachments are less than input maximum attachment size.
+
+Examples:
+
+[%header,format=csv]
+|===
+Attachment sizes in message,Max attachment size,Result
+[],0,PASSED
+[1; 2; 3],0,NOT PASSED
+[1; 2; 3],2,NOT PASSED
+[1; 2; 3],3,PASSED
+|===
+
+=== Attachment hashsum filter ===
+
+This filter lets see the messages associated with the attachment of the hashsum (or its part). This filter checks if the message hashsum starts with the query string. Python CLI usage:
+
+----
+python -m pyadps.cli search --attachment-hashsum=f80c3eee29b [REPO FOLDER (by default it's current folder)]
+----
+
+[%header,format=csv]
+|===
+Hashsum in message,Query,Result
+f80c3eee29b...,f80,PASSED
+f80c3eee29b...,80c3eee,NOT PASSED
+|===
+
+=== Date range filter ===
+
+This filter is enabled by default and filters all mails with the `date_created` field from `30 days ago` to `3 days ahead`. You can set other dates to the filter. Python CLI usage:
+
+----
+python -m pyadps.cli search --datetime-from=2022-01-01 --datetime-to=2022-01-03 [REPO FOLDER (by default it's current folder)]
+---- 
+
+[%header,format=csv]
+|===
+date_created in message,Query,Result
+2022-01-03T10:43:23,[2021-12-31; 2022-01-05],PASSED
+2022-01-03T10:43:23,[2021-12-31; 2022-01-03],NOT PASSED
+2022-01-03T10:43:23,<default; now=2022-01-06>,PASSED
+2022-01-03T10:43:23,<default; now=2022-03-06>,NOT PASSED
+2022-01-03T10:43:23,<default; now=2022-01-01>,PASSED
+2022-01-03T10:43:23,<default; now=2021-12-25>,NOT PASSED
+|===
+
+== Copying messages between repositories ==
+
+----
+  +------------------+ 
+  |FILTERING MESSAGES| 
+  |    IN REPO A     | 
+  +--------|---------+ 
+           |           
++----------|----------+
+|    COPYING FILES    |
+|FROM REPO A TO REPO B|
++---------------------+
+----
+
+After the filtering of the messages (the process is described in the prevous section) you can copy them to another repo. The copying process consists of 3 parts:
+
+. Iterate over filtered messages files in order to collect the distinct set of attachments' hashsums
+. Copying the messages files (from `adps_messages` directory). The files list takes from the filtered messages list.
+. Copying the attachments files (from `adps_attachments` directory). The files list takes from the set of attachments' hashsums generated in the first part. This set is converted to the files list by searching the files by the first 10 letters of the hashsum. Every file is being checked for the full checksum. If the checksum in the set matches the calculated checksum this file is copying to another repo. On the target repo the program also should check if the file with this hashsum exists in the `adps_attachments` folder. If it's not existed in the target repository it should be copied.
+
+=== Examples ===
+
+==== Init data ====
+
+Attachments files:
+
+----
+sha512 fileA 15138c7dd926013e8c4df091c0733dd492de371e459e44f7d56f6ce7f61e6f1ce0093eb1b8a5c6bb73eccbcaf8b0f2326da38f5dc78b4568ced2541a3034b96c
+sha512 fileB 3c155c427a2b427286b2012af0a66d3f9b586ca12566972aed762824c5e08896311c4a50004c71047256f7bf976d75dee82273cdeeaef298ad20867d422e647b
+sha512 fileC 15138c7dd93f45621612ac1f34755161e2191b97a9110f1ed707b8bfd765bce39147921da7f42e758f5e5e999ff2de727be8c6d70e3592e04f4ea61020a157d8
+----
+
+Message files:
+
+----
+sha512 fileD aad5f165bed66fc3a368b4410326b46f7407d3107afbd3c861ddb44ca695249757ba8d02904bddc57330945e01127f0aeb0d7a296e8a0cd44bf4323f866a3863
+sha512 fileE dead245c02dd95c9b4f037504139850a4d37eb9b67d06b49ae9580c3deb2290c4f4f9c5cf8f5a7b8a4434c175ba7156f45f3aaef6d87a860c4148ad9ecd7f378
+sha512 fileF aad5f165bef1e0d76e5f3af1ece31e752c95ddefbb6217116967e7004240187e9d8dc5fa9ac815b1bb5d463ae521fc86736140a98d403d9047506074ec36535e
+----
+
+Attachment links:
+
+----
+D : [A; B]
+E : []
+F : [C; A]
+----
+
+==== Test Cases ====
+
+[%header,format=csv]
+|===
+Source repo filtered messages,Target repo init files,Result file list in the target repo
+[D; E; F],[],["15138c7dd9.bin"; "15138c7dd9_0000.bin"; "3c155c427a.bin"; "aad5f165be.json"; "aad5f165be_0000.json"; "dead245c02.json"]
+[D; F],[],["15138c7dd9.bin"; "15138c7dd9_0000.bin"; "3c155c427a.bin"; "aad5f165be.json"; "aad5f165be_0000.json"]
+[D; E],[],["15138c7dd9.bin"; "3c155c427a.bin"; "aad5f165be.json"; "dead245c02.json"]
+[D; E],["15138c7dd9.bin"; "15138c7dd9_0000.bin"; "15138c7dd9_0001.bin"; "1234567890.json"], ["1234567890.json"; "15138c7dd9.bin"; "15138c7dd9_0000.bin"; "15138c7dd9_0001.bin"; "15138c7dd9_0002.bin"; "3c155c427a.bin"; "aad5f165be.json"; "dead245c02.json"]
+|===
+
+=== Usage ===
+
+Python implementation:
+
+----
+python -m pyadps.cli search [REPO FOLDER (by default it's current folder)] --latitude=55.744 --longitude=37.626 --radius-meters=35000 --datetime-from=2022-01-01 --datetime-to=2022-01-03 --copy --target-repo-folder [TARGET REPO FOLDER]
+----
+
+C# implementation:
+
+After the filtering files click `Files -> Save filtered mails to existing repository...`
+
+== Delete messages ==
+
+IMPORTANT: The delete operation is not revertable, consider using copying files you want to leave to the new repo. After review you can just delete the old repository.
+
+----
+        +------------------+        
+        |FILTERING MESSAGES|        
+        +--------|---------+        
+                 |                                 
++----------------|-----------------+
+|      SEARCHING ATTACHMENTS       |
+|NOT ASSOCIATED WITH OTHER MESSAGES|
++----------------|-----------------+
+                 |                  
+     +-----------|------------+     
+     |DELETE FILTERED MESSAGES|     
+     |     AND ATTACHMENTS    |     
+     +------------------------+     
+----
+
+IMPORTANT: After the delete operation your implementation should correct the remain filenames in `adps_attachments` folder. If there are more than *one* file for one partial hashsum (first 10 hex digests), you should rename these file so that there is the continual numbering using sorted order. Read the next section about this carefully if you implement this method in your own implementation.
+
+=== Maintaining the filename order after delete operation ===
+
+If you delete some attachments and they were not unique by the partial sum, you should correct filenames in the following way:
+
+. First file: `{10 hex digest}.bin`
+. Next files `{10 hex digest}_{XXXX}`, where `XXXX` are digest (`0-9`) from `0000` to `9999`.
+
+For example if there are 6 files after removing operation with the same partial hashsum (eg `0123456789`), the file list should contain the following filenames:
+
+* 0123456789.bin
+* 0123456789_0000.bin
+* 0123456789_0001.bin
+* 0123456789_0002.bin
+* 0123456789_0003.bin
+* 0123456789_0004.bin
+
+I need to introduce this rule in order to search attachments (a lot) more quickly. When we have a lot of files in the `adps_attachments` folder the OS operation `get file list with the mask "0123456789*" from the adps_attachments directory` takes a lot of time especially if we call this operation for every of thousands messages.
+
+=== Examples ===
+
+==== Init data ====
+
+Attachments files:
+
+----
+sha512 fileA 15138c7dd926013e8c4df091c0733dd492de371e459e44f7d56f6ce7f61e6f1ce0093eb1b8a5c6bb73eccbcaf8b0f2326da38f5dc78b4568ced2541a3034b96c
+sha512 fileB 3c155c427a2b427286b2012af0a66d3f9b586ca12566972aed762824c5e08896311c4a50004c71047256f7bf976d75dee82273cdeeaef298ad20867d422e647b
+sha512 fileC 15138c7dd93f45621612ac1f34755161e2191b97a9110f1ed707b8bfd765bce39147921da7f42e758f5e5e999ff2de727be8c6d70e3592e04f4ea61020a157d8
+----
+
+Message files:
+
+----
+sha512 fileD aad5f165bed66fc3a368b4410326b46f7407d3107afbd3c861ddb44ca695249757ba8d02904bddc57330945e01127f0aeb0d7a296e8a0cd44bf4323f866a3863
+sha512 fileE dead245c02dd95c9b4f037504139850a4d37eb9b67d06b49ae9580c3deb2290c4f4f9c5cf8f5a7b8a4434c175ba7156f45f3aaef6d87a860c4148ad9ecd7f378
+sha512 fileF aad5f165bef1e0d76e5f3af1ece31e752c95ddefbb6217116967e7004240187e9d8dc5fa9ac815b1bb5d463ae521fc86736140a98d403d9047506074ec36535e
+----
+
+Attachment links:
+
+----
+D : [A; B]
+E : []
+F : [C; A]
+----
+
+==== Test Cases ====
+
+[%header,format=csv]
+|===
+Source repo messages, Source repo filenames, Messages to delete,Result file list in the target repo
+[D; E; F], ["15138c7dd9.bin"; "15138c7dd9_0000.bin"; "3c155c427a.bin"; "aad5f165be.json"; "aad5f165be_0000.json"; "dead245c02.json"], [D], ["15138c7dd9.bin"; "15138c7dd9_0000.bin"; "aad5f165be.json"; "dead245c02.json"]
+[D; E; F], ["15138c7dd9.bin"; "15138c7dd9_0000.bin"; "3c155c427a.bin"; "aad5f165be.json"; "aad5f165be_0000.json"; "dead245c02.json"], [D; F], ["dead245c02.json"]
+[D; E; F], ["15138c7dd9.bin"; "15138c7dd9_0000.bin"; "3c155c427a.bin"; "aad5f165be.json"; "aad5f165be_0000.json"; "dead245c02.json"], [F], ["15138c7dd9.bin"; 3c155c427a.bin"; "aad5f165be.json"; "dead245c02.json"]
+|===
+
+=== Usage ===
+
+Python implementation:
+
+----
+python -m pyadps.cli search [REPO FOLDER (by default it's current folder)] --latitude=55.744 --longitude=37.626 --radius-meters=35000 --datetime-from=2022-01-01 --datetime-to=2022-01-03 --delete
+----
+
+C# implementation:
+
+Todo: correct
+After the filtering files click `Files -> Delete filtered messages from the repository...`
+
+== Export to folder ==
+
+This feature eases the final delivery to the end point. It supposed that not every ADPS participant have the ADPS software and knowledge about it. It copies the original `.json` message file and associated attachments to an empty folder which we transfer to the end user later (via removable media). The file names in this export folder are taken from the `message.attachment.filename` field instead of `.bin` files in the repository. The following scheme describes how an unskilled user can interoperate with the ADPS network.
+
+----
+ +-----------------------------+  
+ |      AN USER A PREPARES     |  
+ |       FILES FOR USER B      |  
+ |AND PASS THEM TO THE OPERATOR|  
+ +--------------|--------------+  
+                |                 
+  +-------------|-------------+   
+  |OPERATOR WITH ADPS SOFTWARE|   
+  | PREPARES THE MESSAGE FILE |   
+  |    AND PUTS IT TO THE     |   
+  |       ADPS NETWORK        |   
+  +-------------|-------------+   
+                |                 
++---------------|----------------+
+|    ANOTHER OPERATOR WHO HAS    |
+|    CONTACT WITH THE USER B     |
+|EXPORTS THE FILES OF THE MESSAGE|
+| TO AN EMPTY FOLDER ON USB-FLASH|
+| AND TRANSFER IT TO THE USER B  |
++--------------------------------+
+----
+
+=== Usage ===
+
+Python implementation:
+
+----
+python -m pyadps.cli export /path-to-the-repo/e882cef10f.json /Users/myuser/Documents/12-Dec-Steeve-Message
+----
+
+C# implementation:
+
+Open the message (double click on message on filtered list), click the `Export to folder` button.
+
+== Additional features of SharpADPS ==
+
+C# implentation (SharpADPS) is supposed to be an implementation any user could use the ADPS. So there are some features that makes UI more attractive than the Python implementation.
+
+=== Filtering modes ===
+
+On the left-bottom corner you can choose one of 3 filtering modes:
+
+. `New search` clears current filtered mails list and returns new list by the filters' values. It iterates over all messages in the repository. This mode is default.
+. `Refine current search` works like the previous one but it iterates over the current filtered messages, not whole repository.
+. `Add results to current search` searches messages in whole repository (like the first one) and merges the found messages to the current list.
+
+=== Select / leave only modes of selection ===
+
+On the page with the filtered mails you can `remove the selected mails` from the filtered list. Also you can invert this operation clicking `Leave selected mails in the filtered mails list`. Both selection modes are available on `Selection` menu or by right click on selected mails (context menu).
+
+=== Translation to other languages ===
+
+I've embedded 2 hard-coded translations to the program:
+
+. `English`. Because it's an international language.
+. `Russian`. Because I'm Russian :).
+
+If you want see this program on another language you can add external translation file. To do it click `Settings -> Language -> Save current translation to external file...`. After you saved the current embedded translation to an `.xml` file open with a text editor. Change the content of the tags, save and relaunch the program and you should see translated interface.
+
+After this you can share you translation `.xml` file to other users who want to use this program on another language. In order to import external translation click `Settings -> Load existing translation file...`. This file should be accessble by the program every time so avoid importing from flash-media or a temporary folder.
+
+You can change the language by clicking `Settings -> Language -> Choose -> <translation>`
+
+=== Logging ===
+
+Every software has bugs. Not every user will use the Debug build with attached breakpoints on the Visual Studio. So the logging makes possible to diagnose the errors. It works by following scheme: `Start capturing logs to the RAM -> Using the SharpADPS and collecting logs -> Dumping the captured logs from the RAM to a .txt file`. The first and the last stages are controlled by `Settings -> Logging` menu.
+
+=== Hashsum engine ===
+
+DotNet calculates `sha512` very slowly. So I've attached `openssl` library to the program. Thanks to the https://github.com/openssl-net/openssl-net[openssl-net] project I could integrate this library to the program. But this library was compiled for `x86` and currently modern OS `Windows 10 x64` can run this build with `x86` openssl but it adds the requirement to platform to be x86-compatible. So I've added feature of switching between the internal `.NET` sha512 calculator and the external `openssl` one. You can choose `.NET` engine if you want to avoid the execution of non-dot-net code on the `Settings -> Hashsum Engine` menu.
+
+=== Application settings file ===
+
+For most of the SharpADPS features described above you don't need to set up every time you launch the application because it loads the last settings from the settings file. It can be located on different direcories (depends on OS). On Windows XP the file is accessible by `C:\Documents and Settings\user\Application Data\WpfAdpsConfig.xml`.
