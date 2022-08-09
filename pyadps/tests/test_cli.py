@@ -201,7 +201,7 @@ class TestGetDefaultDampingDistanceFilter:
         assert damping_distance_filter.location == CoordsData(55.7558, 37.6178)
 
     def test_fail(self):
-        with pytest.raises(click.Abort):
+        with pytest.raises(click.ClickException):
             get_default_damping_distance_filter(SOMEWHERE_ON_ATLANTIC_OCEAN.lat, SOMEWHERE_ON_ATLANTIC_OCEAN.lon)
 
 

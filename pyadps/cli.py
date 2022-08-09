@@ -217,7 +217,7 @@ def delete_messages_by_mail_paths(
         confirm_delete = click.confirm('Do you want to delete these files?')
 
     if not confirm_delete:
-        raise click.Abort('Operation is cancelled')
+        raise click.ClickException('Operation is cancelled')
 
     for file_path in [*msg_paths, *attachment_paths_to_delete]:
         os.remove(file_path)
@@ -266,9 +266,9 @@ def get_default_damping_distance_filter(
             cities_csv_path=worldcities_csv_path,
         )
         if most_populated_city is None:
-            raise click.Abort('Could not find a city near by presented coordinates')
+            raise click.ClickException('Could not find a city near by presented coordinates')
     except Exception as e:
-        raise click.Abort(f'Could not process worldcities.csv: {e!r}')
+        raise click.ClickException(f'Could not process worldcities.csv: {e!r}')
 
     coefficient: float = 10.0  # unit: people per meter
     base_distance_meters = most_populated_city.population / coefficient
@@ -440,15 +440,15 @@ def search(
     target_repo_folder: Optional[str],
 ):
     if not is_valid_repo_folder(repo_folder):
-        raise click.Abort(f'The folder {repo_folder!r} is not valid repository. '
-                          f'Use command init for creating the repository')
+        raise click.UsageError(f'The folder {repo_folder!r} is not valid repository. '
+                               f'Use command init for creating the repository')
 
     if copy_msg and (target_repo_folder is None):
-        raise click.Abort('You should specify the target_repo_folder in case you want to copy the messages')
+        raise click.UsageError('You should specify the target_repo_folder in case you want to copy the messages')
 
     if target_repo_folder is not None and not is_valid_repo_folder(target_repo_folder):
-        raise click.Abort(f'The target folder {repo_folder!r} is not valid repository. '
-                          f'Use command init for creating the repository')
+        raise click.UsageError(f'The target folder {repo_folder!r} is not valid repository. '
+                               'Use command init for creating the repository')
 
     storage = Storage(repo_folder)
 
