@@ -1,5 +1,7 @@
 # PyADPS - python lib and CLI for Amateur Digital Post Service
 
+https://adps-project.org
+
 ## Installing
 
 ```
@@ -7,7 +9,7 @@ pip install -r requirements.txt  # or requirements-dev for development
 pip install -e .
 ```
 
-## Generating test repository
+## Generating test repository (works only on dev environment)
 
 ```
 python pyadps/scripts/generate_data.py /path/to/repository
